@@ -12,8 +12,8 @@ OUTPUT = "freeview_rich_14day.xml"
 LOGO_DIR = "logos"
 
 # Change these to your actual GitHub info
-GITHUB_USER = "YourUsername"
-GITHUB_REPO = "YourRepo"
+GITHUB_USER = "ads1230"
+GITHUB_REPO = "freeview-epg"
 GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/logos/"
 
 if not os.path.exists(LOGO_DIR):
