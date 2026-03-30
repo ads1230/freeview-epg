@@ -21,51 +21,69 @@ def get_meta(pid):
     return None
 
 def run():
-    start = int(time.time() // 3600 * 3600)
+    # Use the current time, but back up 1 hour to ensure we get the current show
+    start = int(time.time() // 3600 * 3600) - 3600
     end = start + (DAYS * 86400)
     channels = {}
     progs = []
     cache = {}
     curr = start
 
+    print(f"Starting fetch at {datetime.fromtimestamp(start)}")
+
     while curr < end:
         try:
-            res = requests.get(f"https://www.freeview.co.uk/api/tv-guide?nid={NID}&start={curr}", timeout=10).json()
-            for entry in res.get('data', {}).get('channels', []):
-                c = entry['channel']
-                cid = c['id']
+            # Added a proper User-Agent to prevent being blocked as a bot
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            url = f"https://www.freeview.co.uk/api/tv-guide?nid={NID}&start={curr}"
+            
+            r = requests.get(url, headers=headers, timeout=15)
+            res = r.json()
+            
+            # Check if the API returned actual channel data
+            data_channels = res.get('data', {}).get('channels', [])
+            
+            if not data_channels:
+                print(f"No data found for chunk: {curr}")
+                curr += SIX_HOURS
+                continue
+
+            for entry in data_channels:
+                c = entry.get('channel', {})
+                cid = c.get('id')
+                if not cid: continue
+                
                 if cid not in channels:
-                    channels[cid] = {'name': c['name'], 'lcn': c.get('lcn'), 'logo': c.get('image')}
+                    channels[cid] = {
+                        'name': c.get('name'), 
+                        'lcn': c.get('lcn'), 
+                        'logo': c.get('image')
+                    }
                 
                 for p in entry.get('programs', []):
                     pid = p.get('programId') or p.get('pId')
+                    # Use a unique key to prevent duplicates
+                    prog_key = f"{cid}_{p['startTime']}"
+                    
                     if pid and pid not in cache:
                         cache[pid] = get_meta(pid)
                         time.sleep(0.05)
-                    progs.append({'cid': cid, 's': p['startTime'], 'e': p['endTime'], 't': p['title'], 'pid': pid})
-            curr += SIX_HOURS
-        except: curr += SIX_HOURS
 
-    with open(OUTPUT, 'w', encoding='utf-8') as f:
-        f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n')
-        for cid, info in channels.items():
-            f.write(f'  <channel id="{cid}">\n    <display-name>{info["name"]}</display-name>\n')
-            if info["lcn"]: f.write(f'    <display-name>{info["lcn"]}</display-name>\n')
-            if info["logo"]: f.write(f'    <icon src="{info["logo"]}" />\n')
-            f.write('  </channel>\n')
-        for p in progs:
-            m = cache.get(p['pid'])
-            st = datetime.fromtimestamp(int(p['s'])).strftime('%Y%m%d%H%M%S +0000')
-            et = datetime.fromtimestamp(int(p['e'])).strftime('%Y%m%d%H%M%S +0000')
-            f.write(f'  <programme start="{st}" stop="{et}" channel="{p["cid"]}">\n')
-            f.write(f'    <title>{p["t"].replace("&", "&amp;")}</title>\n')
-            if m:
-                if m['sub']: f.write(f'    <sub-title>{m["sub"].replace("&", "&amp;")}</sub-title>\n')
-                if m['desc']: f.write(f'    <desc>{m["desc"].replace("&", "&amp;")}</desc>\n')
-                if m['img']: f.write(f'    <icon src="{m["img"]}" />\n')
-                if m['sn'] and m['en']: f.write(f'    <episode-num system="onscreen">S{m["sn"]} E{m["en"]}</episode-num>\n')
-            f.write('  </programme>\n')
-        f.write('</tv>')
+                    progs.append({
+                        'cid': cid, 
+                        's': p['startTime'], 
+                        'e': p['endTime'], 
+                        't': p['title'], 
+                        'pid': pid,
+                        'key': prog_key
+                    })
+            
+            curr += SIX_HOURS
+            print(f"Successfully fetched up to: {datetime.fromtimestamp(curr)}")
+            
+        except Exception as e:
+            print(f"Error at {curr}: {e}")
+            curr += SIX_HOURS
 
 if __name__ == "__main__":
     run()
