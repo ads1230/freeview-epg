@@ -1,53 +1,71 @@
 import requests
 import time
+import re
 from datetime import datetime, timedelta
-import isodate # You may need to: pip install isodate
 
 # --- Configuration ---
 NID = "64257"
 DAYS = 14
-OUTPUT = "freeview_24h_14day.xml"
+OUTPUT = "freeview_rich_14day.xml"
 
 def get_meta(pid):
-    """Fetches rich episode info (remains the same as previous)"""
+    """Fetches rich episode info and remote image URLs."""
     try:
-        r = requests.get(f"https://www.freeview.co.uk/api/more-episodes?nid={NID}&pid={pid}", timeout=5)
-        if r.status_code == 200:
-            d = r.json().get('data', {})
+        params = {'nid': NID, 'pid': pid}
+        resp = requests.get(f"https://www.freeview.co.uk/api/more-episodes", params=params, timeout=5)
+        if resp.status_code == 200:
+            d = resp.json().get('data', {})
             return {
-                'sn': d.get('seriesNumber'), 'en': d.get('episodeNumber'),
-                'desc': d.get('description'), 'sub': d.get('episodeTitle'),
+                'sn': d.get('seriesNumber'), 
+                'en': d.get('episodeNumber'),
+                'desc': d.get('description'), 
+                'sub': d.get('episodeTitle'),
                 'img': d.get('imageUrl')
             }
-    except: pass
+    except:
+        pass
     return None
 
-def parse_duration(start_str, duration_iso):
-    """Converts ISO8601 duration (PT3H30M) to a stop timestamp."""
+def parse_duration_to_stop(start_str, duration_str):
+    """
+    Parses ISO 8601 duration (e.g., PT3H30M) and returns XMLTV stop time.
+    Uses regex to avoid 'isodate' dependency.
+    """
+    # Parse the start time: 2026-03-31T05:00:00+0000
     start_dt = datetime.strptime(start_str, "%Y-%m-%dT%H:%M:%S%z")
-    duration = isodate.parse_duration(duration_iso)
-    stop_dt = start_dt + duration
+    
+    # Extract Hours, Minutes, Seconds using Regex
+    hours = re.search(r'(\d+)H', duration_str)
+    minutes = re.search(r'(\d+)M', duration_str)
+    seconds = re.search(r'(\d+)S', duration_str)
+    
+    h = int(hours.group(1)) if hours else 0
+    m = int(minutes.group(1)) if minutes else 0
+    s = int(seconds.group(1)) if seconds else 0
+    
+    stop_dt = start_dt + timedelta(hours=h, minutes=m, seconds=s)
     return stop_dt.strftime('%Y%m%d%H%M%S %z')
 
 def run():
-    # Set the start to 05:00:00 today (matching the sample file's typical start)
+    # Start from 05:00 today (matches typical Freeview daily start)
     now = datetime.now()
     start_dt = datetime(now.year, now.month, now.day, 5, 0, 0)
     
     channels = {}
     progs = []
     cache = {}
-
     headers = {'User-Agent': 'Mozilla/5.0'}
 
     for day in range(DAYS):
-        current_ts = int((start_dt + timedelta(days=day)).timestamp())
+        current_dt = start_dt + timedelta(days=day)
+        current_ts = int(current_dt.timestamp())
         url = f"https://www.freeview.co.uk/api/tv-guide?nid={NID}&start={current_ts}"
-        print(f"Fetching 24h block for: {datetime.fromtimestamp(current_ts)}")
+        
+        print(f"Fetching Day {day+1}/{DAYS}: {current_dt.strftime('%Y-%m-%d')}")
         
         try:
-            res = requests.get(url, headers=headers, timeout=15).json()
-            # The structure from your file: data -> programs -> [service_id, title, events]
+            r = requests.get(url, headers=headers, timeout=15)
+            res = r.json()
             day_data = res.get('data', {}).get('programs', [])
             
             for channel_entry in day_data:
@@ -59,28 +77,26 @@ def run():
 
                 for event in channel_entry.get('events', []):
                     pid = event.get('program_id')
-                    start_raw = event.get('start_time')
-                    duration_raw = event.get('duration')
+                    start_raw = event.get('start_time') # 2026-03-31T05:00:00+0000
+                    dur_raw = event.get('duration')     # PT3H30M
                     
-                    # Convert timestamps for XMLTV
-                    start_xml = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M:%S%z").strftime('%Y%m%d%H%M%S %z')
-                    stop_xml = parse_duration(start_raw, duration_raw)
+                    # Formatting for XMLTV
+                    s_dt = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M:%S%z")
+                    start_xml = s_dt.strftime('%Y%m%d%H%M%S %z')
+                    stop_xml = parse_duration_to_stop(start_raw, dur_raw)
                     
                     if pid and pid not in cache:
                         cache[pid] = get_meta(pid)
                         time.sleep(0.05)
 
                     progs.append({
-                        'cid': cid, 
-                        's': start_xml, 
-                        'e': stop_xml, 
-                        't': event.get('main_title'), 
-                        'pid': pid
+                        'cid': cid, 's': start_xml, 'e': stop_xml, 
+                        't': event.get('main_title'), 'pid': pid
                     })
         except Exception as e:
-            print(f"Error on day {day}: {e}")
+            print(f"Error fetching day {day}: {e}")
 
-    # --- Write XML ---
+    # --- Write XMLTV ---
     with open(OUTPUT, 'w', encoding='utf-8') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n')
         for cid, info in channels.items():
@@ -100,6 +116,7 @@ def run():
                     f.write(f'    <episode-num system="onscreen">S{m["sn"]} E{m["en"]}</episode-num>\n')
             f.write('  </programme>\n')
         f.write('</tv>')
+    print(f"Done! Created {OUTPUT}")
 
 if __name__ == "__main__":
     run()
