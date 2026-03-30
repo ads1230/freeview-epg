@@ -1,0 +1,38 @@
+name: Daily EPG Update
+
+on:
+  schedule:
+    # This runs at 03:00 UTC every day
+    - cron: '0 3 * * *'
+  workflow_dispatch: # This adds a button so you can run it manually
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Give the action permission to write the XML back to your repo
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Run EPG Script
+        run: python epg_script.py
+
+      - name: Commit and Push XML
+        run: |
+          git config --global user.name "EPG-Bot"
+          git config --global user.email "bot@github.com"
+          git add freeview_rich_14day.xml
+          # Only commit if the file actually changed to avoid errors
+          git commit -m "Update EPG Data - $(date)" || exit 0
+          git push
