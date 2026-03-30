@@ -1,15 +1,13 @@
-name: Daily EPG Update
+name: Daily Freeview EPG Update
 
 on:
   schedule:
-    # This runs at 03:00 UTC every day
     - cron: '0 3 * * *'
-  workflow_dispatch: # This adds a button so you can run it manually
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    # Give the action permission to write the XML back to your repo
     permissions:
       contents: write
 
@@ -26,14 +24,17 @@ jobs:
         run: |
           pip install requests tqdm
 
-      - name: Run EPG Script
+      - name: Run Freeview Script
+        env:
+          # This maps your GitHub Secret (EPG_TOKEN) to the script
+          EPG_TOKEN_ENV: ${{ secrets.EPG_TOKEN }}
         run: python epg_script.py
 
-      - name: Commit and Push XML
+      - name: Commit and Push
         run: |
           git config --global user.name "EPG-Bot"
           git config --global user.email "bot@github.com"
-          git add freeview_rich_14day.xml
-          # Only commit if the file actually changed to avoid errors
-          git commit -m "Update EPG Data - $(date)" || exit 0
+          # Ensure logos folder name matches the Python script
+          git add freeview_rich_8day.xml logos/
+          git commit -m "Update Freeview Bolton - $(date)" || exit 0
           git push
