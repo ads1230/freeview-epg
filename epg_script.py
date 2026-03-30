@@ -1,127 +1,122 @@
 import requests
 import time
 import re
+import os
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 
 # --- Configuration ---
 NID = "64257"
-DAYS = 8  # Adjusted to 8 based on testing
+DAYS = 8
 OUTPUT = "freeview_rich_14day.xml"
+LOGO_DIR = "logos"
+
+# Create logos directory if it doesn't exist
+if not os.path.exists(LOGO_DIR):
+    os.makedirs(LOGO_DIR)
+
+def download_icon(url):
+    """Downloads an icon if it doesn't exist and returns the local filename."""
+    if not url: return None
+    
+    # Extract filename (e.g., bbc-one.png)
+    filename = os.path.basename(urlparse(url).path)
+    if not filename: return None
+    
+    local_path = os.path.join(LOGO_DIR, filename)
+    
+    # Only download if we don't have it to save time/bandwidth
+    if not os.path.exists(local_path):
+        try:
+            r = requests.get(url, timeout=10)
+            if r.status_code == 200:
+                with open(local_path, 'wb') as f:
+                    f.write(r.content)
+                print(f"   [Logo] Downloaded: {filename}")
+        except:
+            return None
+    return filename
 
 def get_meta(pid):
-    """Fetches rich episode metadata from the more-episodes endpoint."""
     try:
         params = {'nid': NID, 'pid': pid}
         resp = requests.get(f"https://www.freeview.co.uk/api/more-episodes", params=params, timeout=5)
         if resp.status_code == 200:
             d = resp.json().get('data', {})
             return {
-                'sn': d.get('seriesNumber'), 
-                'en': d.get('episodeNumber'),
-                'desc': d.get('description'), 
-                'sub': d.get('episodeTitle'),
-                'img': d.get('imageUrl')
+                'sn': d.get('seriesNumber'), 'en': d.get('episodeNumber'),
+                'desc': d.get('description'), 'sub': d.get('episodeTitle'),
+                'img_url': d.get('imageUrl')
             }
-    except:
-        pass
+    except: pass
     return None
 
 def parse_duration_to_stop(start_str, duration_str):
-    """Parses ISO 8601 duration (PT3H30M) into a stop time string."""
     start_dt = datetime.strptime(start_str, "%Y-%m-%dT%H:%M:%S%z")
     hours = re.search(r'(\d+)H', duration_str)
     minutes = re.search(r'(\d+)M', duration_str)
-    h = int(hours.group(1)) if hours else 0
-    m = int(minutes.group(1)) if minutes else 0
-    stop_dt = start_dt + timedelta(hours=h, minutes=m)
-    return stop_dt.strftime('%Y%m%d%H%M%S %z')
+    h, m = (int(hours.group(1)) if hours else 0), (int(minutes.group(1)) if minutes else 0)
+    return (start_dt + timedelta(hours=h, minutes=m)).strftime('%Y%m%d%H%M%S %z')
 
 def run():
     now_utc = datetime.now(timezone.utc)
-    # Anchor to Midnight UTC to match the 24h block structure
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
     
-    channels = {}
-    progs = []
-    cache = {}
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) GitHub-Action-EPG'}
+    channels, progs, cache = {}, [], {}
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
     for day in range(DAYS):
-        target_dt = start_of_today + timedelta(days=day)
-        current_ts = int(target_dt.timestamp())
-        url = f"https://www.freeview.co.uk/api/tv-guide?nid={NID}&start={current_ts}"
-        
-        print(f"Fetching Day {day+1}/{DAYS}: {target_dt.strftime('%Y-%m-%d')}")
-        
+        ts = int((start_of_today + timedelta(days=day)).timestamp())
         try:
-            r = requests.get(url, headers=headers, timeout=20)
-            res = r.json()
+            res = requests.get(f"https://www.freeview.co.uk/api/tv-guide?nid={NID}&start={ts}", headers=headers, timeout=20).json()
             day_data = res.get('data', {}).get('programs', [])
             
-            if not day_data:
-                print(f"   ! No data returned for this day.")
-                continue
-
             for channel_entry in day_data:
                 cid = channel_entry.get('service_id')
-                cname = channel_entry.get('title')
-                
                 if cid not in channels:
-                    channels[cid] = {'name': cname}
+                    # DOWNLOAD CHANNEL LOGO
+                    logo_file = download_icon(channel_entry.get('channel', {}).get('image'))
+                    channels[cid] = {'name': channel_entry.get('title'), 'logo': logo_file}
 
                 for event in channel_entry.get('events', []):
                     pid = event.get('program_id')
-                    start_raw = event.get('start_time')
-                    dur_raw = event.get('duration')
-                    
-                    # Convert timestamps for XMLTV
-                    s_dt = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M:%S%z")
-                    start_xml = s_dt.strftime('%Y%m%d%H%M%S %z')
-                    stop_xml = parse_duration_to_stop(start_raw, dur_raw)
-                    
-                    # Check cache for rich info
                     if pid and pid not in cache:
                         cache[pid] = get_meta(pid)
-                        time.sleep(0.05) # Throttle to prevent API lockout
+                        time.sleep(0.05)
 
                     progs.append({
-                        'cid': cid, 's': start_xml, 'e': stop_xml, 
+                        'cid': cid, 
+                        's': datetime.strptime(event['start_time'], "%Y-%m-%dT%H:%M:%S%z").strftime('%Y%m%d%H%M%S %z'), 
+                        'e': parse_duration_to_stop(event['start_time'], event['duration']),
                         't': event.get('main_title'), 'pid': pid
                     })
-        except Exception as e:
-            print(f"   ! Error: {e}")
+        except: continue
 
-    if not progs:
-        print("Error: No programs collected. Script will not write empty file.")
-        return
+    # Write XMLTV
+    # Change 'YourUsername' and 'YourRepo' to your actual GitHub details
+    GITHUB_RAW_BASE = "https://raw.githubusercontent.com/YourUsername/YourRepo/main/logos/"
 
-    # --- Write XMLTV ---
     with open(OUTPUT, 'w', encoding='utf-8') as f:
-        f.write('<?xml version="1.0" encoding="UTF-8"?>\n')
-        f.write('<!DOCTYPE tv SYSTEM "xmltv.dtd">\n')
-        f.write('<tv generator-info-name="Freeview-Action-Scraper">\n')
-        
-        # Write Channel info
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n')
         for cid, info in channels.items():
             f.write(f'  <channel id="{cid}">\n')
             f.write(f'    <display-name>{info["name"]}</display-name>\n')
+            if info['logo']:
+                f.write(f'    <icon src="{GITHUB_RAW_BASE}{info["logo"]}" />\n')
             f.write('  </channel>\n')
 
-        # Write Programme info
         for p in progs:
             m = cache.get(p['pid'])
             f.write(f'  <programme start="{p["s"]}" stop="{p["e"]}" channel="{p["cid"]}">\n')
-            f.write(f'    <title>{p["t"].replace("&", "&amp;").replace("<", "&lt;")}</title>\n')
-            
+            f.write(f'    <title>{p["t"].replace("&", "&amp;")}</title>\n')
             if m:
-                if m.get('sub'): f.write(f'    <sub-title>{m["sub"].replace("&", "&amp;")}</sub-title>\n')
-                if m.get('desc'): f.write(f'    <desc>{m["desc"].replace("&", "&amp;")}</desc>\n')
-                if m.get('img'): f.write(f'    <icon src="{m["img"]}" />\n')
-                if m.get('sn') and m.get('en'): 
-                    f.write(f'    <episode-num system="onscreen">S{m["sn"]} E{m["en"]}</episode-num>\n')
+                if m['sub']: f.write(f'    <sub-title>{m["sub"].replace("&", "&amp;")}</sub-title>\n')
+                if m['desc']: f.write(f'    <desc>{m["desc"].replace("&", "&amp;")}</desc>\n')
+                if m['img_url']:
+                    # Optional: You could also download program posters, but it fills up Git quickly.
+                    f.write(f'    <icon src="{m["img_url"]}" />\n')
             f.write('  </programme>\n')
         f.write('</tv>')
-    print(f"Successfully generated {OUTPUT} with {len(progs)} entries.")
 
 if __name__ == "__main__":
     run()
