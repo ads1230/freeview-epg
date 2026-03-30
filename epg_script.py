@@ -16,8 +16,8 @@ NID = "64257"
 DAYS = 8       
 OUTPUT = "freeview_rich_8day.xml"
 LOGO_DIR = "logos"
-GITHUB_USER = "YourUsername"
-GITHUB_REPO = "YourRepo"
+GITHUB_USER = "ads1230"
+GITHUB_REPO = "freeview-epg"
 GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/{LOGO_DIR}/"
 
 if not os.path.exists(LOGO_DIR):
