@@ -3,8 +3,8 @@ import os
 import sys
 import re
 import html
+import urllib.parse
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
 
 def log(msg):
     print(msg)
@@ -66,7 +66,7 @@ def run():
     if not os.path.exists(LOGO_DIR):
         os.makedirs(LOGO_DIR)
 
-    log(f"--- Running North West Guide (NID: {NID}) ---")
+    log(f"--- Running North West Guide with Deep Program Info (NID: {NID}) ---")
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
@@ -76,6 +76,8 @@ def run():
     master_logos = get_logo_map(session)
 
     channels, progs = {}, []
+    crid_cache = {} # The memory bank to prevent 4-hour hangs
+    
     now_utc = datetime.now(timezone.utc)
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
 
@@ -99,21 +101,57 @@ def run():
                 
                 for ev in chan.get('events', []):
                     try:
-                        start_dt = datetime.strptime(ev['start_time'], "%Y-%m-%dT%H:%M:%S%z")
+                        start_raw = ev.get('start_time', '')
+                        start_dt = datetime.strptime(start_raw, "%Y-%m-%dT%H:%M:%S%z")
+                        
                         if 'end_time' in ev:
                             end_dt = datetime.strptime(ev['end_time'], "%Y-%m-%dT%H:%M:%S%z")
                         else:
                             end_dt = start_dt + timedelta(minutes=30)
+
+                        # --- DEEP PROGRAM INFO FETCHING ---
+                        crid = ev.get('program_id')
+                        subtitle = ''
+                        desc = ''
+                        
+                        if crid:
+                            # If we already looked up this exact episode, use our memory
+                            if crid in crid_cache:
+                                subtitle = crid_cache[crid]['subtitle']
+                                desc = crid_cache[crid]['desc']
+                            else:
+                                # First time seeing this episode, ask the Freeview API
+                                safe_crid = urllib.parse.quote(crid, safe='')
+                                safe_start = urllib.parse.quote(start_raw, safe='')
+                                # Use NID 64257 for program metadata as per your URL
+                                prog_url = f"https://www.freeview.co.uk/api/program?sid={cid}&nid=64257&pid={safe_crid}&start_time={safe_start}"
+                                
+                                try:
+                                    pr = session.get(prog_url, timeout=5)
+                                    if pr.status_code == 200:
+                                        p_data = pr.json().get('data', {}).get('programs', [])
+                                        if p_data:
+                                            p_info = p_data[0]
+                                            subtitle = p_info.get('secondary_title', '')
+                                            # Grab medium synopsis, fallback to short
+                                            synopses = p_info.get('synopsis', {})
+                                            desc = synopses.get('medium', '') or synopses.get('short', '')
+                                            
+                                            # Save to memory for next time
+                                            crid_cache[crid] = {'subtitle': subtitle, 'desc': desc}
+                                except Exception:
+                                    pass # If API times out, just leave description blank for this show
 
                         progs.append({
                             'cid': cid,
                             'start': start_dt.strftime('%Y%m%d%H%M%S %z'),
                             'stop': end_dt.strftime('%Y%m%d%H%M%S %z'),
                             'title': ev.get('main_title', 'Unknown'),
-                            'desc': ev.get('synopsis', '')
+                            'subtitle': subtitle,
+                            'desc': desc
                         })
                     except Exception as e:
-                        pass
+                        pass # Ignore broken dates safely
         except Exception as e:
             log(f"Error: {e}")
 
@@ -122,7 +160,6 @@ def run():
         f.write('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv>\n')
         
         for cid, info in channels.items():
-            # Use html.escape to guarantee perfect XML safety
             clean_name = html.escape(info['name'])
             f.write(f'<channel id="{cid}"><display-name>{clean_name}</display-name>')
             if info['logo']:
@@ -131,11 +168,15 @@ def run():
             
         for p in progs:
             clean_title = html.escape(p['title'])
-            clean_desc = html.escape(p['desc'])
-            f.write(f'<programme start="{p["start"]}" stop="{p["stop"]}" channel="{p["cid"]}">')
-            f.write(f'<title>{clean_title}</title>')
+            clean_subtitle = html.escape(p['subtitle']) if p['subtitle'] else ""
+            clean_desc = html.escape(p['desc']) if p['desc'] else ""
+            
+            f.write(f'<programme start="{p["start"]}" stop="{p["stop"]}" channel="{p["cid"]}">\n')
+            f.write(f'  <title>{clean_title}</title>\n')
+            if clean_subtitle:
+                f.write(f'  <sub-title>{clean_subtitle}</sub-title>\n')
             if clean_desc:
-                f.write(f'<desc>{clean_desc}</desc>')
+                f.write(f'  <desc>{clean_desc}</desc>\n')
             f.write('</programme>\n')
             
         f.write('</tv>')
