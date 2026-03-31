@@ -21,12 +21,13 @@ GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO
 def download_icon(url, session):
     if not url: return None
     
-    # Append width for high-res
+    # Ensure the URL has the width parameter for high-res
     full_url = f"{url}?w=800" if "?" not in url else f"{url}&w=800"
     
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path)
     if not filename: return None
+    # Ensure it has an extension for GitHub/Jellyfin to recognize
     if "." not in filename: filename += ".png"
     
     local_path = os.path.join(LOGO_DIR, filename)
@@ -43,25 +44,29 @@ def download_icon(url, session):
             return None
     return filename
 
-def find_logo_in_json(obj):
-    """Recursively searches the JSON for a logo URL."""
-    # Common keys used by Freeview/Everyone TV for logos
-    keys_to_check = ['default', 'image_url', 'url', 'image']
-    
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k in ['logo', 'image_assets', 'image']:
-                if isinstance(v, dict):
-                    for sub_k in keys_to_check:
-                        if v.get(sub_k): return v.get(sub_k)
-                elif isinstance(v, str) and v.startswith('http'):
-                    return v
-            
-            res = find_logo_in_json(v)
+def find_logo_url(data):
+    """
+    Scans the JSON dictionary for anything that looks like a logo URL.
+    Prioritizes 'default' keys within image/logo objects.
+    """
+    if isinstance(data, dict):
+        # Specific check for the 'default' key you noted
+        if "default" in data and isinstance(data["default"], str) and "http" in data["default"]:
+            return data["default"]
+        
+        # Fallback: check other common image keys
+        for key in ["image_url", "url", "image", "src"]:
+            if key in data and isinstance(data[key], str) and "http" in data[key]:
+                return data[key]
+        
+        # Recurse deeper
+        for v in data.values():
+            res = find_logo_url(v)
             if res: return res
-    elif isinstance(obj, list):
-        for item in obj:
-            res = find_logo_in_json(item)
+            
+    elif isinstance(data, list):
+        for item in data:
+            res = find_logo_url(item)
             if res: return res
     return None
 
@@ -76,13 +81,12 @@ def get_logo_map(session):
             
             for c in channels_list:
                 sid = str(c.get('service_id'))
-                img_url = find_logo_in_json(c)
+                # Use the recursive finder to grab the URL
+                img_url = find_logo_url(c)
                 if img_url:
                     logo_map[sid] = img_url
             
-            log(f"Master List mapped {len(logo_map)} logos.")
-            if len(logo_map) == 0 and len(channels_list) > 0:
-                log(f"DEBUG: First channel structure: {channels_list[0]}")
+            log(f"Master List successfully mapped {len(logo_map)} logos.")
     except Exception as e:
         log(f"Logo map fetch error: {e}")
     return logo_map
@@ -95,12 +99,14 @@ def run():
     session = requests.Session()
     session.headers.update({'User-Agent': 'Mozilla/5.0'})
     
+    # 1. Map the logos using the deep-search tool
     master_logos = get_logo_map(session)
 
     channels, progs = {}, []
     now_utc = datetime.now(timezone.utc)
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
 
+    # 2. Fetch Schedule
     for day in range(DAYS):
         ts = int((start_of_today + timedelta(days=day)).timestamp())
         log(f"Fetching Day {day+1}/8...")
@@ -113,7 +119,8 @@ def run():
             for chan in day_data:
                 cid = str(chan.get('service_id'))
                 if cid not in channels:
-                    logo_url = master_logos.get(cid) or find_logo_in_json(chan)
+                    # Look up logo from map OR find it in the current channel data
+                    logo_url = master_logos.get(cid) or find_logo_url(chan)
                     logo_file = download_icon(logo_url, session) if logo_url else None
                     
                     channels[cid] = {
@@ -130,17 +137,20 @@ def run():
         except Exception as e:
             log(f"Error: {e}")
 
-    log(f"Writing XML with {len(channels)} channels...")
+    # 3. Write XML
+    log(f"Writing XML with {len(channels)} channels and high-res logos...")
     with open(OUTPUT, 'w', encoding='utf-8') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv>')
         for cid, info in channels.items():
-            f.write(f'<channel id="{cid}"><display-name>{info["name"].replace("&", "&amp;")}</display-name>')
+            clean_name = info['name'].replace("&", "&amp;")
+            f.write(f'<channel id="{cid}"><display-name>{clean_name}</display-name>')
             if info['logo']:
                 f.write(f'<icon src="{GITHUB_RAW_BASE}{info["logo"]}" />')
             f.write('</channel>')
             
         for p in progs:
-            f.write(f'<programme start="{p["start"]}" channel="{p["cid"]}"><title>{p["title"].replace("&", "&amp;")}</title></programme>')
+            clean_title = p['title'].replace("&", "&amp;")
+            f.write(f'<programme start="{p["start"]}" channel="{p["cid"]}"><title>{clean_title}</title></programme>')
         f.write('</tv>')
     log("Process Complete.")
 
