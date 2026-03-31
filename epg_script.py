@@ -9,7 +9,7 @@ def log(msg):
     sys.stdout.flush()
 
 # --- Configuration ---
-NID = "64377" # North West / Winter Hill
+NID = "64377" 
 DAYS = 8
 OUTPUT = "freeview_rich_8day.xml"
 LOGO_DIR = "logos"
@@ -21,10 +21,9 @@ GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO
 def download_icon(url, session):
     if not url: return None
     
-    # Ensure we append the width parameter for high-res quality
+    # Append width for high-res
     full_url = f"{url}?w=800" if "?" not in url else f"{url}&w=800"
     
-    # Generate filename from the URL path (usually a hash)
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path)
     if not filename: return None
@@ -38,30 +37,56 @@ def download_icon(url, session):
             if r.status_code == 200:
                 with open(local_path, 'wb') as f:
                     f.write(r.content)
-                log(f"   [SUCCESS] Downloaded logo: {filename}")
+                log(f"   [SUCCESS] Downloaded: {filename}")
                 return filename
-        except Exception as e:
-            log(f"   [ERROR] Failed to download {filename}: {e}")
+        except:
             return None
     return filename
 
+def find_logo_in_json(obj):
+    """Recursively searches the JSON for a logo URL."""
+    # Common keys used by Freeview/Everyone TV for logos
+    keys_to_check = ['default', 'image_url', 'url', 'image']
+    
+    if isinstance(obj, dict):
+        # Check if this dict has a 'logo' or 'image_assets' key
+        for k, v in obj.items():
+            if k in ['logo', 'image_assets', 'image']:
+                # If we found a logo object, look for the 'default' or URL inside it
+                if isinstance(v, dict):
+                    for sub_k in keys_to_check:
+                        if v.get(sub_k): return v.get(sub_k)
+                elif isinstance(v, str) and v.startswith('http'):
+                    return v
+            
+            # Keep digging deeper
+            res = find_logo_in_json(v)
+            if res: return res
+    elif isinstance(obj, list):
+        for item in obj:
+            res = find_logo_in_json(item)
+            if res: return res
+    return None
+
 def get_logo_map(session):
-    """Deep-drills into the JSON to find the logo URL."""
     logo_map = {}
     try:
         log(f"Fetching master logo list (NID: 64257)...")
-        # We use 64257 for the master list as it's the most reliable endpoint for logos
         r = session.get("https://www.freeview.co.uk/api/channel-list?nid=64257", timeout=15)
         if r.status_code == 200:
-            channels_data = r.json().get('data', {}).get('channels', [])
-            for c in channels_data:
+            data = r.json().get('data', {})
+            channels_list = data.get('channels', [])
+            
+            for c in channels_list:
                 sid = str(c.get('service_id'))
-                # Correctly navigating: image_assets -> logo -> default
-                img_url = c.get('image_assets', {}).get('logo', {}).get('default')
+                # Use our deep search function to find the URL
+                img_url = find_logo_in_json(c)
                 if img_url:
                     logo_map[sid] = img_url
             
-            log(f"Master List successfully mapped {len(logo_map)} logos.")
+            log(f"Master List mapped {len(logo_map)} logos.")
+            if len(logo_map) == 0 and len(channels_list) > 0:
+                log(f"DEBUG: First channel structure: {channels_list[0]}")
     except Exception as e:
         log(f"Logo map fetch error: {e}")
     return logo_map
@@ -70,18 +95,16 @@ def run():
     if not os.path.exists(LOGO_DIR):
         os.makedirs(LOGO_DIR)
 
-    log(f"--- Running North West Guide with High-Res Logos ---")
+    log(f"--- Running North West Guide (NID: {NID}) ---")
     session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+    session.headers.update({'User-Agent': 'Mozilla/5.0'})
     
-    # 1. Build the Logo Map
     master_logos = get_logo_map(session)
 
     channels, progs = {}, []
     now_utc = datetime.now(timezone.utc)
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
 
-    # 2. Fetch Schedule
     for day in range(DAYS):
         ts = int((start_of_today + timedelta(days=day)).timestamp())
         log(f"Fetching Day {day+1}/8...")
@@ -94,9 +117,7 @@ def run():
             for chan in day_data:
                 cid = str(chan.get('service_id'))
                 if cid not in channels:
-                    # Logic: Try master map first, then try the inline guide image
-                    logo_url = master_logos.get(cid) or chan.get('channel', {}).get('image')
-                    
+                    logo_url = master_logos.get(cid) or find_logo_in_json(chan)
                     logo_file = download_icon(logo_url, session) if logo_url else None
                     
                     channels[cid] = {
@@ -113,21 +134,17 @@ def run():
         except Exception as e:
             log(f"Error: {e}")
 
-    # 3. Write XML
     log(f"Writing XML with {len(channels)} channels...")
     with open(OUTPUT, 'w', encoding='utf-8') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv>')
         for cid, info in channels.items():
-            clean_name = info['name'].replace("&", "&amp;")
-            f.write(f'<channel id="{cid}"><display-name>{clean_name}</display-name>')
+            f.write(f'<channel id="{cid}"><display-name>{info["name"].replace("&", "&amp;")}</display-name>')
             if info['logo']:
-                # Build the full URL to the file in your GitHub repo
                 f.write(f'<icon src="{GITHUB_RAW_BASE}{info["logo"]}" />')
             f.write('</channel>')
             
         for p in progs:
-            clean_title = p['title'].replace("&", "&amp;")
-            f.write(f'<programme start="{p["start"]}" channel="{p["cid"]}"><title>{clean_title}</title></programme>')
+            f.write(f'<programme start="{p["start"]}" channel="{p["cid"]}"><title>{p["title"].replace("&", "&amp;")}</title></programme>')
         f.write('</tv>')
     log("Process Complete.")
 
