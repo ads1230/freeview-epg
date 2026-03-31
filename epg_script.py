@@ -18,7 +18,7 @@ DAYS = 8
 LOGO_DIR = "logos"
 CACHE_FILE = "crid_cache.json"
 
-# Your custom UK Region Map! (Fully deduplicated)
+# Your custom UK Region Map! (100% Unique - 17 Regions)
 REGIONS = {
     "London": "64257",
     "East_Midlands": "64345",
@@ -26,16 +26,17 @@ REGIONS = {
     "North_West": "64377",
     "North_East": "64361",
     "Yorkshire": "64364",
-    "East_Yorkshire": "64369",
-    "East_Anglia": "64353",
-    "South": "64305",
-    "South_East": "64273",
-    "South_West": "64275",
-    "West": "64328",
+    "East_Yorkshire": "64353",
+    "East_Anglia": "64305",
+    "South": "64273",
+    "South_East": "64280",
+    "South_West": "64328",
+    "West": "64321",
     "Scotland": "64405",
     "Wales": "64417",
     "Northern_Ireland": "64425",
-    "Channel_Islands": "64334"
+    "Channel_Islands": "64334",
+    "Border": "64385"
 }
 
 # Auto-detect GitHub paths for Logo URLs
@@ -174,6 +175,24 @@ def run():
         log(f"=================================================")
         
         region_cookies = {f'fv_location': nid, 'userNid': nid}
+        
+        # --- NEW: Region Verification ---
+        try:
+            v_ts = int(start_of_today.timestamp())
+            v_url = f"https://www.freeview.co.uk/api/tv-guide?nid={nid}&start={v_ts}"
+            v_res = requests.get(v_url, headers=HEADERS, cookies=region_cookies, timeout=10)
+            if v_res.status_code == 200:
+                v_chans = v_res.json().get('data', {}).get('programs', [])
+                v_bbc, v_itv = "not available", "not available"
+                for c in v_chans:
+                    c_title = c.get('title', '')
+                    if "bbc one" in c_title.lower() and v_bbc == "not available": v_bbc = c_title
+                    if "itv1" in c_title.lower() and v_itv == "not available": v_itv = c_title
+                log(f"   [VERIFY] BBC Name: {v_bbc}")
+                log(f"   [VERIFY] ITV Name: {v_itv}")
+        except:
+            log("   [VERIFY] Region verification skip: API Error")
+
         channels, progs = {}, []
         missing_crids, unique_crids = {}, set()
         
