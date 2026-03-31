@@ -1,8 +1,8 @@
 import requests
 import os
 import sys
+import re
 from datetime import datetime, timedelta, timezone
-from urllib.parse import urlparse
 
 def log(msg):
     print(msg)
@@ -18,53 +18,56 @@ GITHUB_REPO_FULL = os.getenv('GITHUB_REPOSITORY', 'YourUsername/YourRepo')
 GITHUB_USER, GITHUB_REPO = GITHUB_REPO_FULL.split('/') if '/' in GITHUB_REPO_FULL else ("Unknown", "Unknown")
 GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/{LOGO_DIR}/"
 
-def download_icon(url, session):
+def make_safe_filename(name):
+    """Converts 'BBC ONE N West!' to 'bbc_one_n_west.png'"""
+    if not name: return "unknown.png"
+    # Convert to lowercase, replace spaces with underscores, remove non-alphanumeric
+    safe = re.sub(r'[^a-z0-9_]', '', name.lower().replace(' ', '_'))
+    return f"{safe}.png"
+
+def download_icon(url, channel_name, session):
     if not url: return None
     
     # Ensure high-res quality
     base_url = url.split('?')[0]
     full_url = f"{base_url}?w=800"
     
-    parsed_url = urlparse(base_url)
-    filename = os.path.basename(parsed_url.path)
-    if not filename: return None
-    if "." not in filename: filename += ".png"
-    
+    # Use the human-readable channel name
+    filename = make_safe_filename(channel_name)
     local_path = os.path.join(LOGO_DIR, filename)
     
+    # If we already have the readable logo, don't download it again
     if not os.path.exists(local_path):
         try:
             r = session.get(full_url, timeout=10)
             if r.status_code == 200:
                 with open(local_path, 'wb') as f:
                     f.write(r.content)
-                log(f"   [SAVED] Channel Logo: {filename}")
+                log(f"   [SAVED] {filename}")
                 return filename
         except:
             return None
     return filename
 
 def get_logo_map(session):
-    """Parses the specific 'services' JSON structure to get official logos."""
+    """Fetches the official logos directly from the LIVE Freeview API."""
     logo_map = {}
     try:
-        log(f"Fetching master logo list (NID: 64257)...")
+        log(f"Fetching master logo list from Live API (NID: 64257)...")
         r = session.get("https://www.freeview.co.uk/api/channel-list?nid=64257", timeout=15)
+        
         if r.status_code == 200:
-            # THE FIX: Freeview uses 'services', not 'channels'
             services_data = r.json().get('data', {}).get('services', [])
             
             for s in services_data:
                 sid = str(s.get('service_id'))
-                # Pull the direct image link found in your JSON file
                 img_url = s.get('service_image') or s.get('images', {}).get('default')
-                
                 if img_url:
                     logo_map[sid] = img_url
             
-            log(f"Successfully mapped {len(logo_map)} Station Logos.")
+            log(f"Successfully mapped {len(logo_map)} Station Logos from the Live API.")
     except Exception as e:
-        log(f"Logo map fetch error: {e}")
+        log(f"Live logo map fetch error: {e}")
     return logo_map
 
 def run():
@@ -78,14 +81,12 @@ def run():
         'Cookie': f'fv_location={NID}; userNid={NID}'
     })
     
-    # 1. Build the correct logo map
     master_logos = get_logo_map(session)
 
     channels, progs = {}, []
     now_utc = datetime.now(timezone.utc)
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
 
-    # 2. Fetch Schedule
     for day in range(DAYS):
         ts = int((start_of_today + timedelta(days=day)).timestamp())
         log(f"Fetching Day {day+1}/8...")
@@ -97,13 +98,15 @@ def run():
             day_data = r.json().get('data', {}).get('programs', [])
             for chan in day_data:
                 cid = str(chan.get('service_id'))
+                chan_name = chan.get('title', 'Unknown')
+                
                 if cid not in channels:
-                    # Look up logo from our corrected master map
                     logo_url = master_logos.get(cid)
-                    logo_file = download_icon(logo_url, session) if logo_url else None
+                    # Pass the channel name to the download function
+                    logo_file = download_icon(logo_url, chan_name, session) if logo_url else None
                     
                     channels[cid] = {
-                        'name': chan.get('title'),
+                        'name': chan_name,
                         'logo': logo_file
                     }
                 
@@ -116,7 +119,6 @@ def run():
         except Exception as e:
             log(f"Error: {e}")
 
-    # 3. Write XML
     log(f"Writing XML with {len(channels)} channels...")
     with open(OUTPUT, 'w', encoding='utf-8') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv>')
