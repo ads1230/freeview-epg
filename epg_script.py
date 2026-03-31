@@ -277,7 +277,7 @@ def run():
     # --- PASS 3: Generate the XML ---
     log(f"\nWriting XML with {len(channels)} channels and {len(progs)} shows...")
     with open(OUTPUT, 'w', encoding='utf-8') as f:
-        f.write('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv>\n')
+        f.write('<?xml version="1.0" encoding="UTF-8"?>\n<tv>\n')        
         
         for cid, info in channels.items():
             clean_name = html.escape(info['name'])
