@@ -11,7 +11,7 @@ def log(msg):
     sys.stdout.flush()
 
 # --- Configuration ---
-NID = "64377" 
+NID = "64377" # Change this NID to generate the guide for any UK region
 DAYS = 8
 OUTPUT = "freeview_rich_8day.xml"
 LOGO_DIR = "logos"
@@ -46,37 +46,51 @@ def download_icon(url, channel_name, session):
     return filename
 
 def get_logo_map(session):
-    logo_map = {}
+    logo_map_id = {}
+    logo_map_name = {}
     try:
-        log(f"Fetching master logo list from Live API (NID: 64257)...")
+        log(f"Fetching master logo list from Live API (National List: 64257)...")
         r = session.get("https://www.freeview.co.uk/api/channel-list?nid=64257", timeout=15)
         if r.status_code == 200:
             services_data = r.json().get('data', {}).get('services', [])
             for s in services_data:
                 sid = str(s.get('service_id'))
+                title = s.get('title', '').lower()
+                family = s.get('family_alias', '').lower()
                 img_url = s.get('service_image') or s.get('images', {}).get('default')
+                
                 if img_url:
-                    logo_map[sid] = img_url
-            log(f"Successfully mapped {len(logo_map)} Station Logos.")
+                    logo_map_id[sid] = img_url
+                    if family: 
+                        logo_map_name[family] = img_url
+                    if title:
+                        logo_map_name[title] = img_url
+                        
+            # Manual fallbacks for common naming quirks
+            if 'itv1' in logo_map_name:
+                logo_map_name['itv'] = logo_map_name['itv1']
+                logo_map_name['itv hd'] = logo_map_name['itv1']
+            
+            log(f"Successfully mapped Station Logos to {len(logo_map_id)} IDs and {len(logo_map_name)} Family Names.")
     except Exception as e:
         log(f"Logo map error: {e}")
-    return logo_map
+    return logo_map_id, logo_map_name
 
 def run():
     if not os.path.exists(LOGO_DIR):
         os.makedirs(LOGO_DIR)
 
-    log(f"--- Running North West Guide with Deep Program Info (NID: {NID}) ---")
+    log(f"--- Running Freeview Guide & Universal Logo Extractor (NID: {NID}) ---")
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
         'Cookie': f'fv_location={NID}; userNid={NID}'
     })
     
-    master_logos = get_logo_map(session)
+    master_logos_id, master_logos_name = get_logo_map(session)
 
     channels, progs = {}, []
-    crid_cache = {} # The memory bank to prevent 4-hour hangs
+    crid_cache = {}
     
     now_utc = datetime.now(timezone.utc)
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
@@ -95,7 +109,21 @@ def run():
                 chan_name = chan.get('title', 'Unknown')
                 
                 if cid not in channels:
-                    logo_url = master_logos.get(cid)
+                    logo_url = master_logos_id.get(cid)
+                    
+                    # --- UNIVERSAL REGIONAL FALLBACK MATCHER ---
+                    if not logo_url:
+                        clean_name = chan_name.lower()
+                        # 1. Try exact name match
+                        if clean_name in master_logos_name:
+                            logo_url = master_logos_name[clean_name]
+                        else:
+                            # 2. Try fuzzy family match (Universal across all UK regions)
+                            for fam_name in sorted(master_logos_name.keys(), key=len, reverse=True):
+                                if fam_name and fam_name in clean_name:
+                                    logo_url = master_logos_name[fam_name]
+                                    break
+                    
                     logo_file = download_icon(logo_url, chan_name, session) if logo_url else None
                     channels[cid] = {'name': chan_name, 'logo': logo_file}
                 
@@ -109,21 +137,17 @@ def run():
                         else:
                             end_dt = start_dt + timedelta(minutes=30)
 
-                        # --- DEEP PROGRAM INFO FETCHING ---
                         crid = ev.get('program_id')
                         subtitle = ''
                         desc = ''
                         
                         if crid:
-                            # If we already looked up this exact episode, use our memory
                             if crid in crid_cache:
                                 subtitle = crid_cache[crid]['subtitle']
                                 desc = crid_cache[crid]['desc']
                             else:
-                                # First time seeing this episode, ask the Freeview API
                                 safe_crid = urllib.parse.quote(crid, safe='')
                                 safe_start = urllib.parse.quote(start_raw, safe='')
-                                # Use NID 64257 for program metadata as per your URL
                                 prog_url = f"https://www.freeview.co.uk/api/program?sid={cid}&nid=64257&pid={safe_crid}&start_time={safe_start}"
                                 
                                 try:
@@ -133,14 +157,11 @@ def run():
                                         if p_data:
                                             p_info = p_data[0]
                                             subtitle = p_info.get('secondary_title', '')
-                                            # Grab medium synopsis, fallback to short
                                             synopses = p_info.get('synopsis', {})
                                             desc = synopses.get('medium', '') or synopses.get('short', '')
-                                            
-                                            # Save to memory for next time
                                             crid_cache[crid] = {'subtitle': subtitle, 'desc': desc}
                                 except Exception:
-                                    pass # If API times out, just leave description blank for this show
+                                    pass
 
                         progs.append({
                             'cid': cid,
@@ -151,7 +172,7 @@ def run():
                             'desc': desc
                         })
                     except Exception as e:
-                        pass # Ignore broken dates safely
+                        pass
         except Exception as e:
             log(f"Error: {e}")
 
@@ -163,7 +184,7 @@ def run():
             clean_name = html.escape(info['name'])
             f.write(f'<channel id="{cid}"><display-name>{clean_name}</display-name>')
             if info['logo']:
-                f.write(f'<icon src="{GITHUB_RAW_BASE}{info["logo"]}" />')
+                f.write(f'<icon src="{GITHUB_RAW_BASE}{info["logo"]}?v=1" />')
             f.write('</channel>\n')
             
         for p in progs:
