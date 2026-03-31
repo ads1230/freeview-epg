@@ -6,6 +6,7 @@ import html
 import urllib.parse
 import json
 import concurrent.futures
+import time
 from datetime import datetime, timedelta, timezone
 
 def log(msg):
@@ -41,7 +42,7 @@ def download_icon(url, channel_name):
     
     if not os.path.exists(local_path):
         try:
-            r = requests.get(full_url, headers=HEADERS, cookies=COOKIES, timeout=10)
+            r = requests.get(full_url, headers=HEADERS, cookies=COOKIES, timeout=15)
             if r.status_code == 200:
                 with open(local_path, 'wb') as f:
                     f.write(r.content)
@@ -94,24 +95,51 @@ def save_cache(cache_data):
     except Exception as e:
         log(f"Cache save error: {e}")
 
-# --- THE MULTITHREADING WORKER WITH ERROR HANDLING ---
+# --- HARDENED MULTITHREADING WORKER ---
 def fetch_deep_info(crid, prog_url):
-    try:
-        r = requests.get(prog_url, headers=HEADERS, cookies=COOKIES, timeout=25)
-        if r.status_code == 200:
-            p_data = r.json().get('data', {}).get('programs', [])
-            if p_data:
-                p_info = p_data[0]
-                subtitle = p_info.get('secondary_title', '')
-                synopses = p_info.get('synopsis', {})
-                desc = synopses.get('medium', '') or synopses.get('short', '')
-                return crid, subtitle, desc, None # None = No Error
+    for attempt in range(2):
+        try:
+            r = requests.get(prog_url, headers=HEADERS, cookies=COOKIES, timeout=25)
+            if r.status_code == 200:
+                p_data = r.json().get('data', {}).get('programs', [])
+                
+                if p_data and isinstance(p_data, list) and len(p_data) > 0:
+                    p_info = p_data[0]
+                    
+                    if isinstance(p_info, dict):
+                        subtitle = p_info.get('secondary_title', '')
+                        
+                        synopses = p_info.get('synopsis')
+                        desc = synopses.get('medium', '') or synopses.get('short', '') if isinstance(synopses, dict) else ""
+                        
+                        # --- THE FIX: Extract Accessibility from the Deep Info JSON ---
+                        subs, sign, ad = False, False, False
+                        events = p_info.get('events', [])
+                        if events and isinstance(events, list):
+                            access = events[0].get('access_services', {}).get('tv', {})
+                            subs = access.get('subtitles', False)
+                            sign = access.get('signing', False)
+                            ad = access.get('audio_description', False)
+                            
+                        # We now return 7 pieces of data instead of 4
+                        return crid, subtitle, desc, subs, sign, ad, None
+                    else:
+                        return crid, "", "", False, False, False, None 
+                else:
+                    return crid, "", "", False, False, False, None 
             else:
-                return crid, "", "", "Empty Data Returned"
-        else:
-            return crid, "", "", f"HTTP {r.status_code}"
-    except Exception as e:
-        return crid, "", "", str(e)
+                if attempt == 1: 
+                    return crid, "", "", False, False, False, f"HTTP {r.status_code}"
+        except requests.exceptions.Timeout:
+            if attempt == 1:
+                return crid, "", "", False, False, False, "Timeout"
+        except Exception as e:
+            if attempt == 1:
+                return crid, "", "", False, False, False, str(e)
+        
+        time.sleep(1)
+
+    return crid, "", "", False, False, False, "Unknown Error"
 
 def run():
     if not os.path.exists(LOGO_DIR):
@@ -123,14 +151,14 @@ def run():
     channels, progs = {}, []
     crid_cache = load_cache()
     missing_crids = {} 
-    unique_crids_in_schedule = set() # To track total shows
+    unique_crids_in_schedule = set()
     
     log(f"Loaded {len(crid_cache)} remembered shows from cache.")
     
     now_utc = datetime.now(timezone.utc)
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
 
-    # --- PASS 1: Build the Schedule & Shopping List ---
+    # --- PASS 1: Build Schedule ---
     for day in range(DAYS):
         ts = int((start_of_today + timedelta(days=day)).timestamp())
         log(f"Parsing Day {day+1}/8...")
@@ -138,7 +166,6 @@ def run():
             url = f"https://www.freeview.co.uk/api/tv-guide?nid={NID}&start={ts}"
             r = requests.get(url, headers=HEADERS, cookies=COOKIES, timeout=15)
             if r.status_code != 200:
-                log(f"   [WARNING] Skipped Day {day+1}. HTTP Status: {r.status_code}")
                 continue
 
             day_data = r.json().get('data', {}).get('programs', [])
@@ -167,19 +194,24 @@ def run():
                         end_dt = datetime.strptime(ev['end_time'], "%Y-%m-%dT%H:%M:%S%z") if 'end_time' in ev else start_dt + timedelta(minutes=30)
                         
                         crid = ev.get('program_id')
+                        show_title = ev.get('main_title', 'Unknown')
                         
                         if crid:
                             unique_crids_in_schedule.add(crid)
                             if crid not in crid_cache and crid not in missing_crids:
                                 safe_crid = urllib.parse.quote(crid, safe='')
                                 safe_start = urllib.parse.quote(start_raw, safe='')
-                                missing_crids[crid] = f"https://www.freeview.co.uk/api/program?sid={cid}&nid=64257&pid={safe_crid}&start_time={safe_start}"
+                                
+                                missing_crids[crid] = {
+                                    'url': f"https://www.freeview.co.uk/api/program?sid={cid}&nid=64257&pid={safe_crid}&start_time={safe_start}",
+                                    'title': show_title
+                                }
 
                         progs.append({
                             'cid': cid,
                             'start': start_dt.strftime('%Y%m%d%H%M%S %z'),
                             'stop': end_dt.strftime('%Y%m%d%H%M%S %z'),
-                            'title': ev.get('main_title', 'Unknown'),
+                            'title': show_title,
                             'crid': crid
                         })
                     except Exception:
@@ -187,7 +219,7 @@ def run():
         except Exception as e:
             log(f"Error: {e}")
 
-    # --- PASS 2: Multithreaded Downloading with Progress Bar ---
+    # --- PASS 2: Multithreaded Downloading ---
     total_missing = len(missing_crids)
     if total_missing > 0:
         log("\n--- DEEP INFO FETCHING ---")
@@ -198,24 +230,30 @@ def run():
         
         completed = 0
         error_count = 0
-        
-        # Calculate how often to update the progress bar (roughly every 5%)
         update_interval = max(1, total_missing // 20)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
-            future_to_crid = {executor.submit(fetch_deep_info, c, u): c for c, u in missing_crids.items()}
+            future_to_crid = {executor.submit(fetch_deep_info, c, info['url']): c for c, info in missing_crids.items()}
             
             for future in concurrent.futures.as_completed(future_to_crid):
-                crid, subtitle, desc, err = future.result()
+                # We unpack the new flags here
+                crid, subtitle, desc, subs, sign, ad, err = future.result()
                 completed += 1
                 
                 if err:
                     error_count += 1
-                    log(f"   [ERROR] Failed to fetch {crid} - Reason: {err}")
-                elif subtitle or desc:
-                    crid_cache[crid] = {'subtitle': subtitle, 'desc': desc}
+                    show_name = missing_crids[crid]['title']
+                    log(f"   [ERROR] Failed to fetch '{show_name}' ({crid}) - Reason: {err}")
+                else:
+                    # Save everything to our permanent memory file
+                    crid_cache[crid] = {
+                        'subtitle': subtitle, 
+                        'desc': desc,
+                        'subs': subs,
+                        'sign': sign,
+                        'ad': ad
+                    }
                 
-                # Print the visual progress bar
                 if completed % update_interval == 0 or completed == total_missing:
                     percent = (completed / total_missing) * 100
                     filled_blocks = int(20 * completed // total_missing)
@@ -243,13 +281,25 @@ def run():
             clean_title = html.escape(p['title'])
             
             crid = p.get('crid')
-            sub = html.escape(crid_cache[crid]['subtitle']) if crid and crid in crid_cache and 'subtitle' in crid_cache[crid] else ""
-            desc = html.escape(crid_cache[crid]['desc']) if crid and crid in crid_cache and 'desc' in crid_cache[crid] else ""
+            cache_data = crid_cache.get(crid, {})
+            
+            sub = html.escape(cache_data.get('subtitle', ''))
+            desc = html.escape(cache_data.get('desc', ''))
             
             f.write(f'<programme start="{p["start"]}" stop="{p["stop"]}" channel="{p["cid"]}">\n')
             f.write(f'  <title>{clean_title}</title>\n')
             if sub: f.write(f'  <sub-title>{sub}</sub-title>\n')
-            if desc: f.write(f'  <desc>{desc}</desc>\n')
+            
+            # 1. Add [Audio Described] badge
+            if cache_data.get('ad'):
+                desc = f"[Audio Described] {desc}" if desc else "[Audio Described]"
+            if desc: 
+                f.write(f'  <desc>{desc}</desc>\n')
+            
+            # 2. Write official XMLTV subtitle tags
+            if cache_data.get('subs'): f.write('  <subtitles type="onscreen" />\n')
+            if cache_data.get('sign'): f.write('  <subtitles type="deaf-signed" />\n')
+            
             f.write('</programme>\n')
             
         f.write('</tv>')
