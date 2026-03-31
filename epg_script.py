@@ -2,6 +2,7 @@ import requests
 import os
 import sys
 import re
+import html
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -98,13 +99,11 @@ def run():
                 
                 for ev in chan.get('events', []):
                     try:
-                        # Grab both start AND end times so Jellyfin can draw the grid blocks
                         start_dt = datetime.strptime(ev['start_time'], "%Y-%m-%dT%H:%M:%S%z")
-                        
                         if 'end_time' in ev:
                             end_dt = datetime.strptime(ev['end_time'], "%Y-%m-%dT%H:%M:%S%z")
                         else:
-                            end_dt = start_dt + timedelta(minutes=30) # Safe fallback
+                            end_dt = start_dt + timedelta(minutes=30)
 
                         progs.append({
                             'cid': cid,
@@ -114,7 +113,7 @@ def run():
                             'desc': ev.get('synopsis', '')
                         })
                     except Exception as e:
-                        pass # Skip broken dates safely
+                        pass
         except Exception as e:
             log(f"Error: {e}")
 
@@ -123,15 +122,16 @@ def run():
         f.write('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv>\n')
         
         for cid, info in channels.items():
-            clean_name = info['name'].replace("&", "&amp;").replace("<", "&lt;")
+            # Use html.escape to guarantee perfect XML safety
+            clean_name = html.escape(info['name'])
             f.write(f'<channel id="{cid}"><display-name>{clean_name}</display-name>')
             if info['logo']:
                 f.write(f'<icon src="{GITHUB_RAW_BASE}{info["logo"]}" />')
             f.write('</channel>\n')
             
         for p in progs:
-            clean_title = p['title'].replace("&", "&amp;").replace("<", "&lt;")
-            clean_desc = p['desc'].replace("&", "&amp;").replace("<", "&lt;")
+            clean_title = html.escape(p['title'])
+            clean_desc = html.escape(p['desc'])
             f.write(f'<programme start="{p["start"]}" stop="{p["stop"]}" channel="{p["cid"]}">')
             f.write(f'<title>{clean_title}</title>')
             if clean_desc:
