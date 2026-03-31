@@ -9,7 +9,7 @@ def log(msg):
     sys.stdout.flush()
 
 # --- Configuration ---
-NID = "64377" 
+NID = "64377" # North West / Winter Hill
 DAYS = 8
 OUTPUT = "freeview_rich_8day.xml"
 LOGO_DIR = "logos"
@@ -21,10 +21,10 @@ GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO
 def download_icon(url, session):
     if not url: return None
     
-    # Append the width parameter for high-res
-    full_url = f"{url}?w=800"
+    # Ensure we append the width parameter for high-res quality
+    full_url = f"{url}?w=800" if "?" not in url else f"{url}&w=800"
     
-    # Generate a clean filename from the URL
+    # Generate filename from the URL path (usually a hash)
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path)
     if not filename: return None
@@ -38,7 +38,7 @@ def download_icon(url, session):
             if r.status_code == 200:
                 with open(local_path, 'wb') as f:
                     f.write(r.content)
-                log(f"   [SUCCESS] Downloaded: {filename}")
+                log(f"   [SUCCESS] Downloaded logo: {filename}")
                 return filename
         except Exception as e:
             log(f"   [ERROR] Failed to download {filename}: {e}")
@@ -46,24 +46,22 @@ def download_icon(url, session):
     return filename
 
 def get_logo_map(session):
-    """Correctly extracts the nested 'default' logo URL from the API."""
+    """Deep-drills into the JSON to find the logo URL."""
     logo_map = {}
     try:
         log(f"Fetching master logo list (NID: 64257)...")
+        # We use 64257 for the master list as it's the most reliable endpoint for logos
         r = session.get("https://www.freeview.co.uk/api/channel-list?nid=64257", timeout=15)
         if r.status_code == 200:
             channels_data = r.json().get('data', {}).get('channels', [])
             for c in channels_data:
                 sid = str(c.get('service_id'))
-                # Drills down into the nested JSON structure
-                assets = c.get('image_assets', {})
-                logo_obj = assets.get('logo', {})
-                img_url = logo_obj.get('default')
-                
+                # Correctly navigating: image_assets -> logo -> default
+                img_url = c.get('image_assets', {}).get('logo', {}).get('default')
                 if img_url:
                     logo_map[sid] = img_url
             
-            log(f"Master List found {len(logo_map)} logos.")
+            log(f"Master List successfully mapped {len(logo_map)} logos.")
     except Exception as e:
         log(f"Logo map fetch error: {e}")
     return logo_map
@@ -74,9 +72,9 @@ def run():
 
     log(f"--- Running North West Guide with High-Res Logos ---")
     session = requests.Session()
-    session.headers.update({'User-Agent': 'Mozilla/5.0'})
+    session.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
     
-    # 1. Fetch the correctly mapped logos
+    # 1. Build the Logo Map
     master_logos = get_logo_map(session)
 
     channels, progs = {}, []
@@ -96,7 +94,9 @@ def run():
             for chan in day_data:
                 cid = str(chan.get('service_id'))
                 if cid not in channels:
-                    logo_url = master_logos.get(cid)
+                    # Logic: Try master map first, then try the inline guide image
+                    logo_url = master_logos.get(cid) or chan.get('channel', {}).get('image')
+                    
                     logo_file = download_icon(logo_url, session) if logo_url else None
                     
                     channels[cid] = {
@@ -121,6 +121,7 @@ def run():
             clean_name = info['name'].replace("&", "&amp;")
             f.write(f'<channel id="{cid}"><display-name>{clean_name}</display-name>')
             if info['logo']:
+                # Build the full URL to the file in your GitHub repo
                 f.write(f'<icon src="{GITHUB_RAW_BASE}{info["logo"]}" />')
             f.write('</channel>')
             
