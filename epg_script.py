@@ -20,12 +20,15 @@ GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO
 
 def download_icon(url, session):
     if not url: return None
-    # Ensure the URL includes the width parameter
-    full_url = f"{url}&w=800" if "?" in url else f"{url}?w=800"
     
+    # Append the width parameter as requested
+    full_url = f"{url}?w=800"
+    
+    # Generate a filename from the URL hash
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path)
-    if not filename.endswith('.png'): filename += ".png"
+    if not filename: return None
+    if "." not in filename: filename += ".png"
     
     local_path = os.path.join(LOGO_DIR, filename)
     
@@ -37,32 +40,44 @@ def download_icon(url, session):
                     f.write(r.content)
                 log(f"   [SUCCESS] Downloaded: {filename}")
                 return filename
-        except:
+        except Exception as e:
+            log(f"   [ERROR] Failed to download {filename}: {e}")
             return None
     return filename
+
+def get_logo_map(session):
+    """Correctly extracts the nested 'default' logo URL."""
+    logo_map = {}
+    try:
+        log(f"Fetching master logo list (NID: 64257)...")
+        r = session.get("https://www.freeview.co.uk/api/channel-list?nid=64257", timeout=15)
+        if r.status_code == 200:
+            channels_data = r.json().get('data', {}).get('channels', [])
+            for c in channels_data:
+                sid = str(c.get('service_id'))
+                # Navigate the nested JSON: image_assets -> logo -> default
+                assets = c.get('image_assets', {})
+                logo_obj = assets.get('logo', {})
+                img_url = logo_obj.get('default')
+                
+                if img_url:
+                    logo_map[sid] = img_url
+            
+            log(f"Master List found {len(logo_map)} logos.")
+    except Exception as e:
+        log(f"Logo map fetch error: {e}")
+    return logo_map
 
 def run():
     if not os.path.exists(LOGO_DIR):
         os.makedirs(LOGO_DIR)
 
-    log(f"--- Running North West Guide with Logo Debugging ---")
+    log(f"--- Running North West Guide with High-Res Logos ---")
     session = requests.Session()
     session.headers.update({'User-Agent': 'Mozilla/5.0'})
     
-    # 1. Fetch logos from the master channel-list
-    logo_map = {}
-    try:
-        # We try the 64257 NID for the logo list specifically as it's the most complete
-        r = session.get("https://www.freeview.co.uk/api/channel-list?nid=64257", timeout=15)
-        if r.status_code == 200:
-            channels_data = r.json().get('data', {}).get('channels', [])
-            log(f"Master List found {len(channels_data)} potential logos.")
-            for c in channels_data:
-                sid = str(c.get('service_id'))
-                if c.get('image_url'):
-                    logo_map[sid] = c.get('image_url')
-    except Exception as e:
-        log(f"Logo map fetch error: {e}")
+    # 1. Fetch the correctly mapped logos
+    master_logos = get_logo_map(session)
 
     channels, progs = {}, []
     now_utc = datetime.now(timezone.utc)
@@ -81,18 +96,10 @@ def run():
             for chan in day_data:
                 cid = str(chan.get('service_id'))
                 if cid not in channels:
-                    # Attempt 1: Get from our Master Logo Map
-                    logo_url = logo_map.get(cid)
-                    
-                    # Attempt 2: Get from the TV Guide entry itself if Master Map failed
-                    if not logo_url:
-                        logo_url = chan.get('channel', {}).get('image')
-                    
+                    # Attempt to get logo from master map
+                    logo_url = master_logos.get(cid)
                     logo_file = download_icon(logo_url, session) if logo_url else None
                     
-                    if not logo_file:
-                        log(f"   [Notice] No logo found for {chan.get('title')} (ID: {cid})")
-
                     channels[cid] = {
                         'name': chan.get('title'),
                         'logo': logo_file
@@ -112,13 +119,15 @@ def run():
     with open(OUTPUT, 'w', encoding='utf-8') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv>')
         for cid, info in channels.items():
-            f.write(f'<channel id="{cid}"><display-name>{info["name"].replace("&", "&amp;")}</display-name>')
+            clean_name = info['name'].replace("&", "&amp;")
+            f.write(f'<channel id="{cid}"><display-name>{clean_name}</display-name>')
             if info['logo']:
                 f.write(f'<icon src="{GITHUB_RAW_BASE}{info["logo"]}" />')
             f.write('</channel>')
             
         for p in progs:
-            f.write(f'<programme start="{p["start"]}" channel="{p["cid"]}"><title>{p["title"].replace("&", "&amp;")}</title></programme>')
+            clean_title = p['title'].replace("&", "&amp;")
+            f.write(f'<programme start="{p["start"]}" channel="{p["cid"]}"><title>{clean_title}</title></programme>')
         f.write('</tv>')
     log("Process Complete.")
 
