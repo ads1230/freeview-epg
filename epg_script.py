@@ -41,7 +41,6 @@ def get_logo_map(session):
 
 def download_icon(url, session):
     if not url: return None
-    # Parse filename and handle the width parameter for the local save
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path)
     if not filename.endswith('.png'): filename += ".png"
@@ -50,12 +49,17 @@ def download_icon(url, session):
     
     if not os.path.exists(local_path):
         try:
-            r = session.get(url, timeout=10)
+            # We add the ?w=800 here to get the high-res version
+            r = session.get(f"{url}?w=800", timeout=10)
             if r.status_code == 200:
                 with open(local_path, 'wb') as f:
                     f.write(r.content)
-                log(f"   [New Logo] Saved {filename}")
-        except:
+                log(f"   [SUCCESS] Saved logo: {filename}")
+                return filename
+            else:
+                log(f"   [FAILED] HTTP {r.status_code} for {filename}")
+        except Exception as e:
+            log(f"   [ERROR] Could not save {filename}: {e}")
             return None
     return filename
 
