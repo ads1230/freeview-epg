@@ -1,7 +1,6 @@
 import requests
 import os
 import sys
-import json
 from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
@@ -22,7 +21,7 @@ GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO
 def download_icon(url, session):
     if not url: return None
     
-    # Strip any existing parameters and force high-res
+    # Ensure high-res quality
     base_url = url.split('?')[0]
     full_url = f"{base_url}?w=800"
     
@@ -45,21 +44,48 @@ def download_icon(url, session):
             return None
     return filename
 
+def get_logo_map(session):
+    """Parses the specific 'services' JSON structure to get official logos."""
+    logo_map = {}
+    try:
+        log(f"Fetching master logo list (NID: 64257)...")
+        r = session.get("https://www.freeview.co.uk/api/channel-list?nid=64257", timeout=15)
+        if r.status_code == 200:
+            # THE FIX: Freeview uses 'services', not 'channels'
+            services_data = r.json().get('data', {}).get('services', [])
+            
+            for s in services_data:
+                sid = str(s.get('service_id'))
+                # Pull the direct image link found in your JSON file
+                img_url = s.get('service_image') or s.get('images', {}).get('default')
+                
+                if img_url:
+                    logo_map[sid] = img_url
+            
+            log(f"Successfully mapped {len(logo_map)} Station Logos.")
+    except Exception as e:
+        log(f"Logo map fetch error: {e}")
+    return logo_map
+
 def run():
     if not os.path.exists(LOGO_DIR):
         os.makedirs(LOGO_DIR)
 
-    log(f"--- Running North West Guide & Safe Logo Extractor (NID: {NID}) ---")
+    log(f"--- Running North West Guide (NID: {NID}) ---")
     session = requests.Session()
     session.headers.update({
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
         'Cookie': f'fv_location={NID}; userNid={NID}'
     })
+    
+    # 1. Build the correct logo map
+    master_logos = get_logo_map(session)
 
     channels, progs = {}, []
     now_utc = datetime.now(timezone.utc)
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
 
+    # 2. Fetch Schedule
     for day in range(DAYS):
         ts = int((start_of_today + timedelta(days=day)).timestamp())
         log(f"Fetching Day {day+1}/8...")
@@ -69,24 +95,11 @@ def run():
             if r.status_code != 200: continue
 
             day_data = r.json().get('data', {}).get('programs', [])
-            
             for chan in day_data:
                 cid = str(chan.get('service_id'))
-                
                 if cid not in channels:
-                    # SAFE LOGO EXTRACTION: 
-                    # We look ONLY at the top-level channel data. We do NOT search 
-                    # the 'events' array to ensure we don't accidentally grab show posters.
-                    logo_url = None
-                    
-                    # Check common Freeview API locations for the channel image
-                    if 'image_url' in chan:
-                        logo_url = chan['image_url']
-                    elif 'image' in chan:
-                        logo_url = chan['image']
-                    elif 'image_assets' in chan:
-                        logo_url = chan.get('image_assets', {}).get('logo', {}).get('default')
-
+                    # Look up logo from our corrected master map
+                    logo_url = master_logos.get(cid)
                     logo_file = download_icon(logo_url, session) if logo_url else None
                     
                     channels[cid] = {
@@ -101,8 +114,9 @@ def run():
                         'title': ev.get('main_title')
                     })
         except Exception as e:
-            log(f"Error on day {day}: {e}")
+            log(f"Error: {e}")
 
+    # 3. Write XML
     log(f"Writing XML with {len(channels)} channels...")
     with open(OUTPUT, 'w', encoding='utf-8') as f:
         f.write('<?xml version="1.0" encoding="UTF-8"?><!DOCTYPE tv SYSTEM "xmltv.dtd"><tv>')
