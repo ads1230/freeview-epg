@@ -204,6 +204,9 @@ def run():
                         crid = ev.get('program_id')
                         show_title = ev.get('main_title', 'Unknown')
                         
+                        # --- ADD THIS: Grab the best available image ---
+                        prog_img = ev.get('image_url') or ev.get('fallback_image_url') or ""
+                        
                         if crid:
                             unique_crids_in_schedule.add(crid)
                             if crid not in crid_cache and crid not in missing_crids:
@@ -220,7 +223,8 @@ def run():
                             'start': start_dt.strftime('%Y%m%d%H%M%S %z'),
                             'stop': end_dt.strftime('%Y%m%d%H%M%S %z'),
                             'title': show_title,
-                            'crid': crid
+                            'crid': crid,
+                            'image': prog_img  # --- ADD THIS to our temporary memory ---
                         })
                     except Exception:
                         pass
@@ -295,10 +299,14 @@ def run():
             f.write(f'  <title>{clean_title}</title>\n')
             if sub: f.write(f'  <sub-title>{sub}</sub-title>\n')
             
+            # --- ADD THIS: Write the show image URL for Jellyfin ---
+            if p.get('image'):
+                safe_img = html.escape(p['image'])
+                f.write(f'  <icon src="{safe_img}" />\n')
+            
             if cache_data.get('ad'):
                 desc = f"[Audio Described] {desc}" if desc else "[Audio Described]"
             
-            # This line ensures we ONLY write the <desc> tag if it actually contains text!
             if desc: 
                 f.write(f'  <desc>{desc}</desc>\n')
             
