@@ -24,7 +24,7 @@ REGIONS = {
     "East_Midlands": "64345",
     "West_Midlands": "64337",
     "North_West": "64377",
-    "North_East": "64369",       # Updated!
+    "North_East": "64369",
     "Yorkshire": "64364",
     "East_Yorkshire": "64353",
     "East_Anglia": "64305",
@@ -176,7 +176,7 @@ def run():
         
         region_cookies = {f'fv_location': nid, 'userNid': nid}
         
-        # --- NEW: Region Verification ---
+        # --- Region Verification ---
         try:
             v_ts = int(start_of_today.timestamp())
             v_url = f"https://www.freeview.co.uk/api/tv-guide?nid={nid}&start={v_ts}"
@@ -284,7 +284,15 @@ def run():
                 f.write(f'<programme start="{p["start"]}" stop="{p["stop"]}" channel="{p["cid"]}">\n')
                 f.write(f'  <title>{title}</title>\n')
                 if sub: f.write(f'  <sub-title>{sub}</sub-title>\n')
-                if p.get('image'): f.write(f'  <icon src="{html.escape(p["image"])}" />\n')
+                
+                # --- Fixed Icon URL logic for width parameter ---
+                if p.get('image'):
+                    icon_url = p['image']
+                    # Append ?w=800 if not already present
+                    if "w=" not in icon_url:
+                        icon_url += ("&" if "?" in icon_url else "?") + "w=800"
+                    f.write(f'  <icon src="{html.escape(icon_url)}" />\n')
+                
                 if desc: f.write(f'  <desc>{desc}</desc>\n')
                 if cache.get('subs'): f.write('  <subtitles type="onscreen" />\n')
                 if cache.get('sign'): f.write('  <subtitles type="deaf-signed" />\n')
