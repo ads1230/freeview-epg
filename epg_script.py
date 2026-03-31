@@ -24,7 +24,7 @@ REGIONS = {
     "East_Midlands": "64345",
     "West_Midlands": "64337",
     "North_West": "64377",
-    "North_East": "64361",
+    "North_East": "64369",       # Updated!
     "Yorkshire": "64364",
     "East_Yorkshire": "64353",
     "East_Anglia": "64305",
@@ -292,6 +292,6 @@ def run():
             f.write('</tv>\n')
         log(f"[{region_name}] Complete!\n")
 
-    log("ALL 16 REGIONS PROCESSED SUCCESSFULLY!")
+    log("ALL 17 REGIONS PROCESSED SUCCESSFULLY!")
 
 if __name__ == "__main__": run()
