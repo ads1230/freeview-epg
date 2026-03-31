@@ -286,23 +286,20 @@ def run():
                 f.write(f'<icon src="{GITHUB_RAW_BASE}{info["logo"]}?v=1" />')
             f.write('</channel>\n')
             
-        for p in progs:
-            clean_title = html.escape(p['title'])
+    for p in progs:
+            # Clean the title and cache data before escaping
+            clean_title = html.escape(clean_xml_text(p['title']))
             
             crid = p.get('crid')
             cache_data = crid_cache.get(crid, {})
             
-            sub = html.escape(cache_data.get('subtitle', ''))
-            desc = html.escape(cache_data.get('desc', ''))
+            # Clean sub-title and description to remove hidden illegal characters
+            sub = html.escape(clean_xml_text(cache_data.get('subtitle', '')))
+            desc = html.escape(clean_xml_text(cache_data.get('desc', '')))
             
             f.write(f'<programme start="{p["start"]}" stop="{p["stop"]}" channel="{p["cid"]}">\n')
             f.write(f'  <title>{clean_title}</title>\n')
             if sub: f.write(f'  <sub-title>{sub}</sub-title>\n')
-            
-            # --- ADD THIS: Write the show image URL for Jellyfin ---
-            if p.get('image'):
-                safe_img = html.escape(p['image'])
-                f.write(f'  <icon src="{safe_img}" />\n')
             
             if cache_data.get('ad'):
                 desc = f"[Audio Described] {desc}" if desc else "[Audio Described]"
