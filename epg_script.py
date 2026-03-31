@@ -110,23 +110,35 @@ def fetch_deep_info(crid, prog_url):
                         subtitle = p_info.get('secondary_title', '')
                         
                         synopses = p_info.get('synopsis')
-                        desc = synopses.get('medium', '') or synopses.get('short', '') if isinstance(synopses, dict) else ""
-                        
-                        # --- THE FIX: Extract Accessibility from the Deep Info JSON ---
+                        desc = ""
+                        if isinstance(synopses, dict):
+                            desc = synopses.get('medium', '') or synopses.get('short', '')
+                            
+                        if not desc:
+                            desc = "No programme information"
+                            
                         subs, sign, ad = False, False, False
                         events = p_info.get('events', [])
-                        if events and isinstance(events, list):
-                            access = events[0].get('access_services', {}).get('tv', {})
-                            subs = access.get('subtitles', False)
-                            sign = access.get('signing', False)
-                            ad = access.get('audio_description', False)
-                            
-                        # We now return 7 pieces of data instead of 4
+                        
+                        if events and isinstance(events, list) and len(events) > 0:
+                            first_event = events[0]
+                            if isinstance(first_event, dict):
+                                access_services = first_event.get('access_services')
+                                
+                                if isinstance(access_services, dict):
+                                    tv_access = access_services.get('tv')
+                                    if isinstance(tv_access, dict):
+                                        subs = tv_access.get('subtitles', False)
+                                        sign = tv_access.get('signing', False)
+                                        ad = tv_access.get('audio_description', False)
+                                        
                         return crid, subtitle, desc, subs, sign, ad, None
                     else:
-                        return crid, "", "", False, False, False, None 
+                        # We explicitly flag that the data was empty
+                        return crid, "", "No programme information", False, False, False, "Empty Data Returned" 
                 else:
-                    return crid, "", "", False, False, False, None 
+                    # We explicitly flag that the data was empty
+                    return crid, "", "No programme information", False, False, False, "Empty Data Returned" 
             else:
                 if attempt == 1: 
                     return crid, "", "", False, False, False, f"HTTP {r.status_code}"
@@ -236,23 +248,23 @@ def run():
             future_to_crid = {executor.submit(fetch_deep_info, c, info['url']): c for c, info in missing_crids.items()}
             
             for future in concurrent.futures.as_completed(future_to_crid):
-                # We unpack the new flags here
                 crid, subtitle, desc, subs, sign, ad, err = future.result()
                 completed += 1
                 
                 if err:
-                    error_count += 1
                     show_name = missing_crids[crid]['title']
-                    log(f"   [ERROR] Failed to fetch '{show_name}' ({crid}) - Reason: {err}")
+                    
+                    # --- THE FIX: Intercept "Empty Data Returned" ---
+                    if err == "Empty Data Returned":
+                        log(f"   [ERROR] Failed to fetch '{show_name}' ({crid}) - ERROR: no information found")
+                        # CRITICAL: We still save it to the cache so we don't try again tomorrow
+                        crid_cache[crid] = {'subtitle': subtitle, 'desc': desc, 'subs': subs, 'sign': sign, 'ad': ad}
+                    else:
+                        # For real errors (like network timeouts)
+                        error_count += 1
+                        log(f"   [ERROR] Failed to fetch '{show_name}' ({crid}) - Reason: {err}")
                 else:
-                    # Save everything to our permanent memory file
-                    crid_cache[crid] = {
-                        'subtitle': subtitle, 
-                        'desc': desc,
-                        'subs': subs,
-                        'sign': sign,
-                        'ad': ad
-                    }
+                    crid_cache[crid] = {'subtitle': subtitle, 'desc': desc, 'subs': subs, 'sign': sign, 'ad': ad}
                 
                 if completed % update_interval == 0 or completed == total_missing:
                     percent = (completed / total_missing) * 100
@@ -290,13 +302,11 @@ def run():
             f.write(f'  <title>{clean_title}</title>\n')
             if sub: f.write(f'  <sub-title>{sub}</sub-title>\n')
             
-            # 1. Add [Audio Described] badge
             if cache_data.get('ad'):
                 desc = f"[Audio Described] {desc}" if desc else "[Audio Described]"
             if desc: 
                 f.write(f'  <desc>{desc}</desc>\n')
             
-            # 2. Write official XMLTV subtitle tags
             if cache_data.get('subs'): f.write('  <subtitles type="onscreen" />\n')
             if cache_data.get('sign'): f.write('  <subtitles type="deaf-signed" />\n')
             
