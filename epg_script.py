@@ -49,17 +49,14 @@ def find_logo_in_json(obj):
     keys_to_check = ['default', 'image_url', 'url', 'image']
     
     if isinstance(obj, dict):
-        # Check if this dict has a 'logo' or 'image_assets' key
         for k, v in obj.items():
             if k in ['logo', 'image_assets', 'image']:
-                # If we found a logo object, look for the 'default' or URL inside it
                 if isinstance(v, dict):
                     for sub_k in keys_to_check:
                         if v.get(sub_k): return v.get(sub_k)
                 elif isinstance(v, str) and v.startswith('http'):
                     return v
             
-            # Keep digging deeper
             res = find_logo_in_json(v)
             if res: return res
     elif isinstance(obj, list):
@@ -79,7 +76,6 @@ def get_logo_map(session):
             
             for c in channels_list:
                 sid = str(c.get('service_id'))
-                # Use our deep search function to find the URL
                 img_url = find_logo_in_json(c)
                 if img_url:
                     logo_map[sid] = img_url
