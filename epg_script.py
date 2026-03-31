@@ -97,7 +97,7 @@ def save_cache(cache_data):
 # --- THE MULTITHREADING WORKER WITH ERROR HANDLING ---
 def fetch_deep_info(crid, prog_url):
     try:
-        r = requests.get(prog_url, headers=HEADERS, cookies=COOKIES, timeout=10)
+        r = requests.get(prog_url, headers=HEADERS, cookies=COOKIES, timeout=25)
         if r.status_code == 200:
             p_data = r.json().get('data', {}).get('programs', [])
             if p_data:
@@ -202,7 +202,7 @@ def run():
         # Calculate how often to update the progress bar (roughly every 5%)
         update_interval = max(1, total_missing // 20)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
             future_to_crid = {executor.submit(fetch_deep_info, c, u): c for c, u in missing_crids.items()}
             
             for future in concurrent.futures.as_completed(future_to_crid):
