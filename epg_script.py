@@ -244,7 +244,7 @@ def run():
         error_count = 0
         update_interval = max(1, total_missing // 20)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             future_to_crid = {executor.submit(fetch_deep_info, c, info['url']): c for c, info in missing_crids.items()}
             
             for future in concurrent.futures.as_completed(future_to_crid):
