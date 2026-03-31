@@ -21,10 +21,10 @@ GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO
 def download_icon(url, session):
     if not url: return None
     
-    # Append the width parameter as requested
+    # Append the width parameter for high-res
     full_url = f"{url}?w=800"
     
-    # Generate a filename from the URL hash
+    # Generate a clean filename from the URL
     parsed_url = urlparse(url)
     filename = os.path.basename(parsed_url.path)
     if not filename: return None
@@ -46,7 +46,7 @@ def download_icon(url, session):
     return filename
 
 def get_logo_map(session):
-    """Correctly extracts the nested 'default' logo URL."""
+    """Correctly extracts the nested 'default' logo URL from the API."""
     logo_map = {}
     try:
         log(f"Fetching master logo list (NID: 64257)...")
@@ -55,7 +55,7 @@ def get_logo_map(session):
             channels_data = r.json().get('data', {}).get('channels', [])
             for c in channels_data:
                 sid = str(c.get('service_id'))
-                # Navigate the nested JSON: image_assets -> logo -> default
+                # Drills down into the nested JSON structure
                 assets = c.get('image_assets', {})
                 logo_obj = assets.get('logo', {})
                 img_url = logo_obj.get('default')
@@ -96,7 +96,6 @@ def run():
             for chan in day_data:
                 cid = str(chan.get('service_id'))
                 if cid not in channels:
-                    # Attempt to get logo from master map
                     logo_url = master_logos.get(cid)
                     logo_file = download_icon(logo_url, session) if logo_url else None
                     
