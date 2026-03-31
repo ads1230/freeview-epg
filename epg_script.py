@@ -95,7 +95,6 @@ def save_cache(cache_data):
     except Exception as e:
         log(f"Cache save error: {e}")
 
-# --- HARDENED MULTITHREADING WORKER ---
 def fetch_deep_info(crid, prog_url):
     for attempt in range(2):
         try:
@@ -114,8 +113,7 @@ def fetch_deep_info(crid, prog_url):
                         if isinstance(synopses, dict):
                             desc = synopses.get('medium', '') or synopses.get('short', '')
                             
-                        if not desc:
-                            desc = "No programme information"
+                        # --- REMOVED the "No programme information" injection. We let it be blank! ---
                             
                         subs, sign, ad = False, False, False
                         events = p_info.get('events', [])
@@ -134,11 +132,9 @@ def fetch_deep_info(crid, prog_url):
                                         
                         return crid, subtitle, desc, subs, sign, ad, None
                     else:
-                        # We explicitly flag that the data was empty
-                        return crid, "", "No programme information", False, False, False, "Empty Data Returned" 
+                        return crid, "", "", False, False, False, "Empty Data Returned" 
                 else:
-                    # We explicitly flag that the data was empty
-                    return crid, "", "No programme information", False, False, False, "Empty Data Returned" 
+                    return crid, "", "", False, False, False, "Empty Data Returned" 
             else:
                 if attempt == 1: 
                     return crid, "", "", False, False, False, f"HTTP {r.status_code}"
@@ -254,13 +250,10 @@ def run():
                 if err:
                     show_name = missing_crids[crid]['title']
                     
-                    # --- THE FIX: Intercept "Empty Data Returned" ---
+                    # --- THE FIX: Silently cache empty data without logging it as an error ---
                     if err == "Empty Data Returned":
-                        log(f"   [ERROR] Failed to fetch '{show_name}' ({crid}) - ERROR: no information found")
-                        # CRITICAL: We still save it to the cache so we don't try again tomorrow
                         crid_cache[crid] = {'subtitle': subtitle, 'desc': desc, 'subs': subs, 'sign': sign, 'ad': ad}
                     else:
-                        # For real errors (like network timeouts)
                         error_count += 1
                         log(f"   [ERROR] Failed to fetch '{show_name}' ({crid}) - Reason: {err}")
                 else:
@@ -304,6 +297,8 @@ def run():
             
             if cache_data.get('ad'):
                 desc = f"[Audio Described] {desc}" if desc else "[Audio Described]"
+            
+            # This line ensures we ONLY write the <desc> tag if it actually contains text!
             if desc: 
                 f.write(f'  <desc>{desc}</desc>\n')
             
@@ -313,7 +308,7 @@ def run():
             f.write('</programme>\n')
             
         f.write('</tv>')
-    log("Process Complete. Enjoy the Speed!")
+    log("Process Complete. Enjoy the Cleaner Logs!")
 
 if __name__ == "__main__":
     run()
