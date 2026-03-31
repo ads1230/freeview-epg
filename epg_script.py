@@ -14,6 +14,10 @@ OUTPUT = "freeview_rich_8day.xml"
 # We skip the "get_meta" function entirely to stop the hanging
 
 def run():
+    # Add these two lines:
+    if not os.path.exists("logos"):
+        os.makedirs("logos")
+
     log(f"--- Running Fast-Bolton Guide (No Metadata) ---")
     now_utc = datetime.now(timezone.utc)
     start_of_today = datetime(now_utc.year, now_utc.month, now_utc.day, tzinfo=timezone.utc)
