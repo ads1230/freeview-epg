@@ -1,41 +1,80 @@
-name: Daily Freeview EPG Update
-
+name: Update Freeview EPG
 on:
   schedule:
-    - cron: '0 3 * * *'
-  workflow_dispatch:
+    - cron: '0 0 * * *' # Runs daily at midnight
+  workflow_dispatch:   # Allows manual trigger
 
 jobs:
-  build:
+  # STEP 1: The Seed Job (North West)
+  seed_cache:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      - name: Install dependencies
-        run: |
-          pip install requests tqdm
+      # Only caching the Freeview JSON
+      - name: Restore Freeview Cache
+        uses: actions/cache@v4
+        with:
+          path: crid_cache.json
+          key: freeview-cache-${{ github.run_id }}
+          restore-keys: freeview-cache-
 
-      - name: Run Freeview Script
+      - name: Install Dependencies
+        run: pip install requests tqdm
+
+      - name: Run Seed Region (North West)
+        run: python epg_script.py North_West
         env:
-          # This maps your GitHub Secret (EPG_TOKEN) to the script
-          EPG_TOKEN_ENV: ${{ secrets.EPG_TOKEN }}
-        run: python epg_script.py
+          GITHUB_REPOSITORY: ${{ github.repository }}
 
-      - name: Commit and Push
+      - name: Commit and Push Seed Data
         run: |
-          git config --global user.name "EPG-Bot"
-          git config --global user.email "bot@github.com"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "Update Guide and Logos - $(date)" || exit 0
-        
-          # Use the token to authenticate the push explicitly
-          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git HEAD:main
+          git commit -m "Seed Freeview Cache (North West)" || exit 0
+          git push
+
+  # STEP 2: Parallel Matrix Job (The Other 16 Regions)
+  run_matrix:
+    needs: seed_cache
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        region: [London, East_Midlands, West_Midlands, North_East, Yorkshire, East_Yorkshire, East_Anglia, South, South_East, South_West, West, Scotland, Wales, Northern_Ireland, Channel_Islands, Border]
+      fail-fast: false
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Pull Seeded Cache
+        run: git pull --rebase
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install requests tqdm
+
+      - name: Run Freeview Scraper for ${{ matrix.region }}
+        run: python epg_script.py ${{ matrix.region }}
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+
+      - name: Commit and Push Regional XML
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git pull --rebase
+          git add .
+          git commit -m "Update Freeview EPG: ${{ matrix.region }}" || exit 0
+          git push
