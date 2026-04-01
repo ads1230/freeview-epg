@@ -1,97 +1,57 @@
 name: Update Freeview EPG
 on:
   schedule:
-    - cron: '0 0 * * *' # Runs daily at midnight
-  workflow_dispatch:   # Allows manual trigger
+    - cron: '0 0 * * *' # Runs daily at Midnight
+  workflow_dispatch:
 
 jobs:
-  # STEP 1: The Seed Job (North West)
-  seed_cache:
+  # STEP 1: Freeview Seed
+  seed_freeview:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+      - run: pip install requests
 
-      # Only caching the Freeview JSON
-      - name: Restore Freeview Cache
-        uses: actions/cache@v4
-        with:
-          path: crid_cache.json
-          key: freeview-cache-${{ github.run_id }}
-          restore-keys: freeview-cache-
-
-      - name: Install Dependencies
-        run: pip install requests tqdm
-
-      - name: Run Seed Region (North West)
+      - name: Run Freeview Seed (North West)
         run: python epg_script.py North_West
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
 
-      - name: Commit and Push Seed Data
+      - name: Commit Seed Cache
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "Seed Freeview Cache (North West)" || exit 0
+          git commit -m "Seed Freeview Cache" || exit 0
           git push
 
-  # STEP 2: Parallel Matrix Job (The Other 16 Regions)
-  run_matrix:
-    needs: seed_cache
+  # STEP 2: Freeview Sequential Matrix
+  matrix_freeview:
+    needs: seed_freeview
     runs-on: ubuntu-latest
     strategy:
+      max-parallel: 1
       matrix:
         region: [London, East_Midlands, West_Midlands, North_East, Yorkshire, East_Yorkshire, East_Anglia, South, South_East, South_West, West, Scotland, Wales, Northern_Ireland, Channel_Islands, Border]
       fail-fast: false
     
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
-      - name: Pull Seeded Cache
-        run: git pull --rebase
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - run: git pull --rebase
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+      - run: pip install requests
 
-      - name: Install Dependencies
-        run: pip install requests tqdm
-
-      - name: Run Freeview Scraper for ${{ matrix.region }}
+      - name: Run Freeview Scraper
         run: python epg_script.py ${{ matrix.region }}
-        env:
-          GITHUB_REPOSITORY: ${{ github.repository }}
 
-      - name: Commit and Push Regional XML
+      - name: Commit Regional XML
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
-          git commit -m "Update EPG: ${{ matrix.region }}" || exit 0
-          
-          # The Retry Loop for Parallel Pushing
-          max_retries=15
-          count=0
-          until git push; do
-            count=$((count+1))
-            if [ $count -eq $max_retries ]; then
-              echo "Failed to push after $max_retries attempts."
-              exit 1
-            fi
-            
-            # Wait a random amount of time (1 to 10 seconds) to prevent simultaneous retries
-            sleep_time=$((RANDOM % 10 + 1))
-            echo "Push blocked by another region. Retrying in $sleep_time seconds... (Attempt $count)"
-            sleep $sleep_time
-            
-            # Pull the new files that blocked us, stack our commit on top, and loop back to push
-            git pull --rebase
-          done
+          git commit -m "Update Freeview: ${{ matrix.region }}" || exit 0
+          git pull --rebase
+          git push
