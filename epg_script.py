@@ -143,18 +143,12 @@ def run(target_region=None):
                         meta_cache[crid] = data
                         success_count += 1
                     elif status == 404:
-                        # Ghost Show: No metadata exists. Save an empty entry so we stop asking.
                         meta_cache[crid] = {}
-                        success_count += 1 # Count it as 'resolved'
-                    elif status in [403, 429]: 
-                        blocked_count += 1
-                    else:
-                        # If it's a 500 server error or a timeout, print it so we know!
-                        log(f"   [WARNING] API returned {status} for ID: {crid}")
+                        success_count += 1
+                    elif status in [403, 429]: blocked_count += 1
+                    else: log(f"   [WARNING] API returned {status} for ID: {crid}")
 
-                    # Calculate a 5% update interval for smooth bar animation
                     update_iv = max(1, total_to_fetch // 20)
-                    
                     if completed % update_iv == 0 or completed == total_to_fetch:
                         pct = completed / total_to_fetch
                         bar_len = 20
