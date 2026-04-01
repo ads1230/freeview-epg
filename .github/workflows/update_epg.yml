@@ -5,7 +5,6 @@ on:
   workflow_dispatch:
 
 jobs:
-  # STEP 1: Freeview Seed
   seed_freeview:
     runs-on: ubuntu-latest
     steps:
@@ -17,6 +16,8 @@ jobs:
 
       - name: Run Freeview Seed (North West)
         run: python epg_script.py North_West
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
 
       - name: Commit Seed Cache
         run: |
@@ -24,9 +25,9 @@ jobs:
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
           git add .
           git commit -m "Seed Freeview Cache" || exit 0
+          git pull --rebase
           git push
 
-  # STEP 2: Freeview Sequential Matrix
   matrix_freeview:
     needs: seed_freeview
     runs-on: ubuntu-latest
@@ -46,6 +47,8 @@ jobs:
 
       - name: Run Freeview Scraper
         run: python epg_script.py ${{ matrix.region }}
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
 
       - name: Commit Regional XML
         run: |
