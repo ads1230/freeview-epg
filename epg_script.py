@@ -144,8 +144,15 @@ def run(target_region=None):
                         success_count += 1
                     elif status in [403, 429]: blocked_count += 1
 
-                    if completed % 50 == 0 or completed == total_to_fetch:
-                        log(f"   Progress: {completed}/{total_to_fetch} | Success: {success_count} | Blocks: {blocked_count}")
+                    # Calculate a 5% update interval for smooth bar animation
+                    update_iv = max(1, total_to_fetch // 20)
+                    
+                    if completed % update_iv == 0 or completed == total_to_fetch:
+                        pct = completed / total_to_fetch
+                        bar_len = 20
+                        filled = int(bar_len * pct)
+                        bar = '█' * filled + '-' * (bar_len - filled)
+                        log(f"   Progress: [{bar}] {pct*100:.1f}% ({completed}/{total_to_fetch}) | Success: {success_count} | Blocks: {blocked_count}")
                     
                     if blocked_count >= 5:
                         log("CRITICAL: Multiple blocks detected. Stopping to save cache.")
