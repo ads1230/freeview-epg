@@ -78,6 +78,47 @@ def run(target_region=None):
         cookies = {'fv_location': nid, 'userNid': nid}
         channels, progs, missing_crids = {}, [], {}
 
+        # PASS 0: Fetch Channel Logos
+        log("   [INFO] Checking channel logos...")
+        try:
+            r_chan = requests.get(f"https://www.freeview.co.uk/api/channel-list?nid={nid}", headers=HEADERS, cookies=cookies, timeout=15)
+            if r_chan.status_code == 200:
+                missing_logos = []
+                for chan in r_chan.json().get('data', {}).get('services', []):
+                    cid = str(chan.get('service_id'))
+                    
+                    logo_url = chan.get('service_image')
+                    if not logo_url and 'images' in chan and isinstance(chan['images'], dict):
+                        logo_url = chan['images'].get('default') or chan['images'].get('square_white')
+                        
+                    if cid and logo_url:
+                        logo_path = os.path.join(LOGO_DIR, f"{cid}.png")
+                        if not os.path.exists(logo_path):
+                            fetch_url = logo_url + ("&w=800" if "?" in logo_url else "?w=800")
+                            missing_logos.append((cid, logo_path, fetch_url))
+                
+                total_logos = len(missing_logos)
+                if total_logos > 0:
+                    log(f"   [INFO] Found {total_logos} missing channel logos. Downloading...")
+                    completed = 0
+                    for cid, path, url in missing_logos:
+                        try:
+                            img_data = requests.get(url, headers=HEADERS, timeout=10).content
+                            with open(path, 'wb') as handler: handler.write(img_data)
+                        except Exception: pass
+                        
+                        completed += 1
+                        update_iv = max(1, total_logos // 20)
+                        if completed % update_iv == 0 or completed == total_logos:
+                            pct = completed / total_logos
+                            bar_len = 20
+                            filled = int(bar_len * pct)
+                            bar = '█' * filled + '-' * (bar_len - filled)
+                            log(f"   Logo Progress: [{bar}] {pct*100:.1f}% ({completed}/{total_logos})")
+                else:
+                    log("   [INFO] All channel logos are already up to date.")
+        except Exception as e: log(f"   [WARNING] Failed to fetch channel logos: {e}")
+
         # PASS 1: Build Schedule
         for day in range(DAYS):
             ts = int((start_of_today + timedelta(days=day)).timestamp())
@@ -99,11 +140,9 @@ def run(target_region=None):
                         try:
                             crid = ev.get('program_id')
                             start_str = ev.get('start_time')
-                            duration_str = ev.get('duration') # e.g. "PT1H30M"
+                            duration_str = ev.get('duration')
                             
-                            if not crid or not start_str or not duration_str: 
-                                log(f"   [WARNING] Missing essential data for show '{show_title}'. Skipping.")
-                                continue
+                            if not crid or not start_str or not duration_str: continue
                                 
                             start_dt = datetime.strptime(start_str, "%Y-%m-%dT%H:%M:%S%z")
                             s_time = start_dt.strftime('%Y%m%d%H%M%S %z')
@@ -121,8 +160,7 @@ def run(target_region=None):
                                 'cid': cid, 'crid': crid, 't': show_title, 
                                 'img': ev.get('image_url', ''), 's': s_time, 'e': e_time
                             })
-                        except Exception as e: 
-                            log(f"   [WARNING] Parsing error for show '{show_title}': {e}")
+                        except Exception: pass
             except Exception as e: log(f"   [CRITICAL] Error parsing day {day+1}: {e}")
 
         # PASS 2: Metadata 
@@ -146,8 +184,7 @@ def run(target_region=None):
                         meta_cache[crid] = {}
                         success_count += 1
                     elif status in [403, 429]: blocked_count += 1
-                    else: log(f"   [WARNING] API returned {status} for ID: {crid}")
-
+                    
                     update_iv = max(1, total_to_fetch // 20)
                     if completed % update_iv == 0 or completed == total_to_fetch:
                         pct = completed / total_to_fetch
@@ -157,12 +194,10 @@ def run(target_region=None):
                         log(f"   Progress: [{bar}] {pct*100:.1f}% ({completed}/{total_to_fetch}) | Success: {success_count} | Blocks: {blocked_count}")
                     
                     if blocked_count >= 5:
-                        log("CRITICAL: Multiple blocks detected. Stopping to save cache.")
                         executor.shutdown(wait=False, cancel_futures=True)
                         break
 
             with open(CACHE_FILE, 'w', encoding='utf-8') as f: json.dump(meta_cache, f)
-        else: log("All shows in this region are already cached.")
         
         # PASS 3: Generate XML
         output_file = f"freeview_{region_name.lower()}.xml"
@@ -170,7 +205,12 @@ def run(target_region=None):
         with open(output_file, 'w', encoding='utf-8') as f:
             f.write('<?xml version="1.0" encoding="UTF-8"?><tv>\n')
             for cid, info in channels.items():
-                f.write(f'  <channel id="{cid}"><display-name>{html.escape(info["name"])}</display-name></channel>\n')
+                f.write(f'  <channel id="{cid}">\n')
+                f.write(f'    <display-name>{html.escape(info["name"])}</display-name>\n')
+                if os.path.exists(os.path.join(LOGO_DIR, f"{cid}.png")):
+                    f.write(f'    <icon src="{GITHUB_RAW_BASE}{cid}.png" />\n')
+                f.write(f'  </channel>\n')
+                
             for p in progs:
                 m = meta_cache.get(p['crid'], {})
                 f.write(f'  <programme start="{p["s"]}" stop="{p["e"]}" channel="{p["cid"]}">\n')
