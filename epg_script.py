@@ -133,7 +133,13 @@ def run(target_region=None):
                 
                 for chan in day_chans:
                     cid = str(chan.get('service_id'))
-                    if cid not in channels: channels[cid] = {'name': chan.get('title', 'Unknown')}
+                    if cid not in channels: 
+                        # Extract the official LCN here
+                        lcn_val = chan.get('number') or chan.get('lcn') or chan.get('logical_channel_number')
+                        channels[cid] = {
+                            'name': chan.get('title', 'Unknown'),
+                            'lcn': str(lcn_val) if lcn_val is not None else ""
+                        }
                     
                     for ev in chan.get('events', []):
                         show_title = ev.get('main_title', 'Unknown')
@@ -207,6 +213,11 @@ def run(target_region=None):
             for cid, info in channels.items():
                 f.write(f'  <channel id="{cid}">\n')
                 f.write(f'    <display-name>{html.escape(info["name"])}</display-name>\n')
+                
+                # INJECTING THE LCN TAG HERE
+                if info.get('lcn'):
+                    f.write(f'    <lcn>{info["lcn"]}</lcn>\n')
+                
                 if os.path.exists(os.path.join(LOGO_DIR, f"{cid}.png")):
                     f.write(f'    <icon src="{GITHUB_RAW_BASE}{cid}.png" />\n')
                 f.write(f'  </channel>\n')
