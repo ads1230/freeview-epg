@@ -78,8 +78,8 @@ def run(target_region=None):
         cookies = {'fv_location': nid, 'userNid': nid}
         channels, progs, missing_crids = {}, [], {}
 
-        # PASS 0: Fetch Channel Logos
-        log("   [INFO] Checking channel logos...")
+        # PASS 0: Fetch Channel Logos and LCNs
+        log("   [INFO] Checking channel logos and LCNs...")
         try:
             r_chan = requests.get(f"https://www.freeview.co.uk/api/channel-list?nid={nid}", headers=HEADERS, cookies=cookies, timeout=15)
             if r_chan.status_code == 200:
@@ -87,6 +87,14 @@ def run(target_region=None):
                 for chan in r_chan.json().get('data', {}).get('services', []):
                     cid = str(chan.get('service_id'))
                     
+                    # Extract the official LCN
+                    lcn_val = chan.get('logical_channel_number') or chan.get('number') or chan.get('lcn')
+                    if cid not in channels:
+                        channels[cid] = {'name': chan.get('title', 'Unknown'), 'lcn': str(lcn_val) if lcn_val is not None else ""}
+                    else:
+                        channels[cid]['lcn'] = str(lcn_val) if lcn_val is not None else ""
+
+                    # Extract Logo
                     logo_url = chan.get('service_image')
                     if not logo_url and 'images' in chan and isinstance(chan['images'], dict):
                         logo_url = chan['images'].get('default') or chan['images'].get('square_white')
@@ -134,12 +142,7 @@ def run(target_region=None):
                 for chan in day_chans:
                     cid = str(chan.get('service_id'))
                     if cid not in channels: 
-                        # Extract the official LCN here
-                        lcn_val = chan.get('number') or chan.get('lcn') or chan.get('logical_channel_number')
-                        channels[cid] = {
-                            'name': chan.get('title', 'Unknown'),
-                            'lcn': str(lcn_val) if lcn_val is not None else ""
-                        }
+                        channels[cid] = {'name': chan.get('title', 'Unknown'), 'lcn': ''}
                     
                     for ev in chan.get('events', []):
                         show_title = ev.get('main_title', 'Unknown')
@@ -214,7 +217,7 @@ def run(target_region=None):
                 f.write(f'  <channel id="{cid}">\n')
                 f.write(f'    <display-name>{html.escape(info["name"])}</display-name>\n')
                 
-                # INJECTING THE LCN TAG HERE
+                # INJECT LCN TAG
                 if info.get('lcn'):
                     f.write(f'    <lcn>{info["lcn"]}</lcn>\n')
                 
