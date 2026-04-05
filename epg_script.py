@@ -29,19 +29,19 @@ REGIONS = {
     "Channel_Islands": "64334", "Border": "64385"
 }
 
-# ETSI EN 300 468 DVB Nibble Mapping
+# ETSI EN 300 468 DVB Nibble Mapping (XMLTV Optimized Split)
 DVB_GENRES = {
-    "1": "Movie / Drama",
-    "2": "News / Current Affairs",
-    "3": "Show / Game Show",
-    "4": "Sports",
-    "5": "Children's / Youth",
-    "6": "Music / Ballet / Dance",
-    "7": "Arts / Culture",
-    "8": "Social / Political",
-    "9": "Education / Factual",
-    "a": "Leisure / Hobbies",
-    "b": "Special Characteristics"
+    "1": ["Movie", "Drama"],
+    "2": ["News", "Current Affairs"],
+    "3": ["Show", "Game Show"],
+    "4": ["Sports"],
+    "5": ["Children", "Youth"],
+    "6": ["Music", "Ballet", "Dance"],
+    "7": ["Arts", "Culture"],
+    "8": ["Social", "Political"],
+    "9": ["Education", "Factual"],
+    "a": ["Leisure", "Hobbies"],
+    "b": ["Special Characteristics"]
 }
 
 GITHUB_REPO_FULL = os.getenv('GITHUB_REPOSITORY', 'YourUsername/YourRepo')
@@ -67,12 +67,12 @@ def load_cache():
     return {}
 
 def get_dvb_category(genre_urn):
-    if not genre_urn: return None
+    if not genre_urn: return []
     try:
         val = str(genre_urn).split(':')[-1]
         main_nibble = val[0].lower()
-        return DVB_GENRES.get(main_nibble)
-    except: return None
+        return DVB_GENRES.get(main_nibble, [])
+    except: return []
 
 def fetch_deep_info(crid, prog_url, session):
     try:
@@ -265,9 +265,11 @@ def run(target_region=None):
                 if m.get('ad'): desc = f"[AD] {desc}" if desc else "[AD]"
                 if desc: f.write(f'    <desc>{html.escape(desc)}</desc>\n')
                 
-                # Look for genre in the main schedule data FIRST, then fallback to cache
-                cat = get_dvb_category(p.get('genre') or m.get('genre'))
-                if cat: f.write(f'    <category>{html.escape(cat)}</category>\n')
+                # INJECT DVB CATEGORIES (Split individually)
+                cats = get_dvb_category(p.get('genre') or m.get('genre'))
+                if cats:
+                    for cat in cats:
+                        f.write(f'    <category>{html.escape(cat)}</category>\n')
                 
                 if p['img']: f.write(f'    <icon src="{html.escape(p["img"])}?w=800" />\n')
                 if m.get('subs'): f.write('    <subtitles type="onscreen" />\n')
