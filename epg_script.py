@@ -195,12 +195,13 @@ def run(target_region=None):
                             if crid not in meta_cache:
                                 missing_crids[crid] = f"https://www.freeview.co.uk/api/program?sid={cid}&nid={nid}&pid={urllib.parse.quote(crid)}&start_time={urllib.parse.quote(start_str)}"
                             
-                            # FALLBACK IMAGE LOGIC ADDED HERE
                             show_img = ev.get('image_url') or ev.get('fallback_image_url') or ''
+                            show_genre = ev.get('genre') or ''
 
                             progs.append({
                                 'cid': cid, 'crid': crid, 't': show_title, 
-                                'img': show_img, 's': s_time, 'e': e_time
+                                'img': show_img, 's': s_time, 'e': e_time,
+                                'genre': show_genre
                             })
                         except Exception: pass
             except Exception as e: log(f"   [CRITICAL] Error parsing day {day+1}: {e}")
@@ -264,7 +265,8 @@ def run(target_region=None):
                 if m.get('ad'): desc = f"[AD] {desc}" if desc else "[AD]"
                 if desc: f.write(f'    <desc>{html.escape(desc)}</desc>\n')
                 
-                cat = get_dvb_category(m.get('genre'))
+                # Look for genre in the main schedule data FIRST, then fallback to cache
+                cat = get_dvb_category(p.get('genre') or m.get('genre'))
                 if cat: f.write(f'    <category>{html.escape(cat)}</category>\n')
                 
                 if p['img']: f.write(f'    <icon src="{html.escape(p["img"])}?w=800" />\n')
