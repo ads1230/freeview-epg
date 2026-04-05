@@ -29,6 +29,21 @@ REGIONS = {
     "Channel_Islands": "64334", "Border": "64385"
 }
 
+# ETSI EN 300 468 DVB Nibble Mapping
+DVB_GENRES = {
+    "1": "Movie / Drama",
+    "2": "News / Current Affairs",
+    "3": "Show / Game Show",
+    "4": "Sports",
+    "5": "Children's / Youth",
+    "6": "Music / Ballet / Dance",
+    "7": "Arts / Culture",
+    "8": "Social / Political",
+    "9": "Education / Factual",
+    "a": "Leisure / Hobbies",
+    "b": "Special Characteristics"
+}
+
 GITHUB_REPO_FULL = os.getenv('GITHUB_REPOSITORY', 'YourUsername/YourRepo')
 GITHUB_USER, GITHUB_REPO = GITHUB_REPO_FULL.split('/') if '/' in GITHUB_REPO_FULL else ("Unknown", "Unknown")
 GITHUB_RAW_BASE = f"https://raw.githubusercontent.com/{GITHUB_USER}/{GITHUB_REPO}/main/{LOGO_DIR}/"
@@ -51,6 +66,14 @@ def load_cache():
         except: pass
     return {}
 
+def get_dvb_category(genre_urn):
+    if not genre_urn: return None
+    try:
+        val = str(genre_urn).split(':')[-1]
+        main_nibble = val[0].lower()
+        return DVB_GENRES.get(main_nibble)
+    except: return None
+
 def fetch_deep_info(crid, prog_url, session):
     try:
         r = session.get(prog_url, timeout=15)
@@ -60,7 +83,13 @@ def fetch_deep_info(crid, prog_url, session):
                 p = p_data[0]
                 syn = p.get('synopsis', {})
                 access = p.get('events', [{}])[0].get('access_services', {}).get('tv', {})
-                return crid, {'sub': p.get('secondary_title', ''), 'desc': syn.get('medium', '') or syn.get('short', ''), 'subs': access.get('subtitles', False), 'ad': access.get('audio_description', False)}, 200
+                return crid, {
+                    'sub': p.get('secondary_title', ''), 
+                    'desc': syn.get('medium', '') or syn.get('short', ''), 
+                    'subs': access.get('subtitles', False), 
+                    'ad': access.get('audio_description', False),
+                    'genre': p.get('genre')
+                }, 200
         return crid, {}, r.status_code
     except Exception as e: return crid, {}, str(e)
 
@@ -154,7 +183,7 @@ def run(target_region=None):
                             
                             if not crid or not start_str or not duration_str: continue
                                 
-                            # Strict UTC Conversion here
+                            # Pure UTC Conversion
                             start_dt = datetime.strptime(start_str, "%Y-%m-%dT%H:%M:%S%z").astimezone(timezone.utc)
                             s_time = start_dt.strftime('%Y%m%d%H%M%S +0000')
                             
@@ -218,10 +247,7 @@ def run(target_region=None):
             for cid, info in channels.items():
                 f.write(f'  <channel id="{cid}">\n')
                 f.write(f'    <display-name>{html.escape(info["name"])}</display-name>\n')
-                
-                if info.get('lcn'):
-                    f.write(f'    <lcn>{info["lcn"]}</lcn>\n')
-                
+                if info.get('lcn'): f.write(f'    <lcn>{info["lcn"]}</lcn>\n')
                 if os.path.exists(os.path.join(LOGO_DIR, f"{cid}.png")):
                     f.write(f'    <icon src="{GITHUB_RAW_BASE}{cid}.png" />\n')
                 f.write(f'  </channel>\n')
@@ -235,6 +261,9 @@ def run(target_region=None):
                 desc = clean_xml_text(m.get('desc', ''))
                 if m.get('ad'): desc = f"[AD] {desc}" if desc else "[AD]"
                 if desc: f.write(f'    <desc>{html.escape(desc)}</desc>\n')
+                
+                cat = get_dvb_category(m.get('genre'))
+                if cat: f.write(f'    <category>{html.escape(cat)}</category>\n')
                 
                 if p['img']: f.write(f'    <icon src="{html.escape(p["img"])}?w=800" />\n')
                 if m.get('subs'): f.write('    <subtitles type="onscreen" />\n')
