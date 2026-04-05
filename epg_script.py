@@ -29,19 +29,18 @@ REGIONS = {
     "Channel_Islands": "64334", "Border": "64385"
 }
 
-# ETSI EN 300 468 DVB Nibble Mapping (XMLTV Optimized Split)
-DVB_GENRES = {
-    "1": ["Movie", "Drama"],
-    "2": ["News", "Current Affairs"],
-    "3": ["Show", "Game Show"],
+# Freeview Play Content Classification Scheme (ContentSubjectCS:2014-07)
+FREEVIEW_GENRES = {
+    "0": ["Shopping"],
+    "1": ["Movie", "Film"],
+    "2": ["News", "Factual", "Documentary"],
+    "3": ["Entertainment", "Comedy", "Game Show"],
     "4": ["Sports"],
-    "5": ["Children", "Youth"],
-    "6": ["Music", "Ballet", "Dance"],
-    "7": ["Arts", "Culture"],
-    "8": ["Social", "Political"],
-    "9": ["Education", "Factual"],
-    "a": ["Leisure", "Hobbies"],
-    "b": ["Special Characteristics"]
+    "5": ["Children", "Kids"],
+    "6": ["Music"],
+    "7": ["Lifestyle", "Reality"],
+    "8": ["Drama", "Soap"],
+    "9": ["Arts", "Education"]
 }
 
 GITHUB_REPO_FULL = os.getenv('GITHUB_REPOSITORY', 'YourUsername/YourRepo')
@@ -66,12 +65,13 @@ def load_cache():
         except: pass
     return {}
 
-def get_dvb_category(genre_urn):
+def get_freeview_category(genre_urn):
     if not genre_urn: return []
     try:
+        # Extracts the main category number (e.g. from "3.1" it extracts "3")
         val = str(genre_urn).split(':')[-1]
-        main_nibble = val[0].lower()
-        return DVB_GENRES.get(main_nibble, [])
+        main_cat = val.split('.')[0]
+        return FREEVIEW_GENRES.get(main_cat, [])
     except: return []
 
 def fetch_deep_info(crid, prog_url, session):
@@ -265,8 +265,8 @@ def run(target_region=None):
                 if m.get('ad'): desc = f"[AD] {desc}" if desc else "[AD]"
                 if desc: f.write(f'    <desc>{html.escape(desc)}</desc>\n')
                 
-                # INJECT DVB CATEGORIES (Split individually)
-                cats = get_dvb_category(p.get('genre') or m.get('genre'))
+                # Accurately maps Freeview Play Genres
+                cats = get_freeview_category(p.get('genre') or m.get('genre'))
                 if cats:
                     for cat in cats:
                         f.write(f'    <category>{html.escape(cat)}</category>\n')
