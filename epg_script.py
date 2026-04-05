@@ -183,7 +183,6 @@ def run(target_region=None):
                             
                             if not crid or not start_str or not duration_str: continue
                                 
-                            # Pure UTC Conversion
                             start_dt = datetime.strptime(start_str, "%Y-%m-%dT%H:%M:%S%z").astimezone(timezone.utc)
                             s_time = start_dt.strftime('%Y%m%d%H%M%S +0000')
                             
@@ -196,9 +195,12 @@ def run(target_region=None):
                             if crid not in meta_cache:
                                 missing_crids[crid] = f"https://www.freeview.co.uk/api/program?sid={cid}&nid={nid}&pid={urllib.parse.quote(crid)}&start_time={urllib.parse.quote(start_str)}"
                             
+                            # FALLBACK IMAGE LOGIC ADDED HERE
+                            show_img = ev.get('image_url') or ev.get('fallback_image_url') or ''
+
                             progs.append({
                                 'cid': cid, 'crid': crid, 't': show_title, 
-                                'img': ev.get('image_url', ''), 's': s_time, 'e': e_time
+                                'img': show_img, 's': s_time, 'e': e_time
                             })
                         except Exception: pass
             except Exception as e: log(f"   [CRITICAL] Error parsing day {day+1}: {e}")
