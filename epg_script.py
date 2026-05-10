@@ -238,15 +238,23 @@ def run(target_region=None):
                     if blocked_count >= 5:
                         executor.shutdown(wait=False, cancel_futures=True)
                         break
-            
-            # --- THE FIX: CACHE PRUNING ---
-            # Keeps the cache size small so it never hits GitHub's 100MB limit
-            MAX_CACHE = 15000
-            if len(meta_cache) > MAX_CACHE:
-                # Discard the oldest entries, keeping only the most recent MAX_CACHE items
-                meta_cache = dict(list(meta_cache.items())[-MAX_CACHE:])
 
-            with open(CACHE_FILE, 'w', encoding='utf-8') as f: json.dump(meta_cache, f)
+            # --- THE FIX: SMART CACHE PRUNING (90MB TARGET) ---
+            MAX_BYTES = 90 * 1024 * 1024 
+            
+            while True:
+                cache_str = json.dumps(meta_cache, separators=(',', ':'))
+                cache_size = len(cache_str.encode('utf-8'))
+                
+                if cache_size <= MAX_BYTES:
+                    break
+                    
+                items_to_remove = max(1000, len(meta_cache) // 20)
+                meta_cache = dict(list(meta_cache.items())[items_to_remove:])
+                log(f"   [CACHE WARNING] Size hit {cache_size / (1024*1024):.1f}MB. Pruned oldest {items_to_remove} items.")
+
+            with open(CACHE_FILE, 'w', encoding='utf-8') as f: 
+                f.write(cache_str)
         
         # PASS 3: Generate XML
         output_file = f"freeview_{region_name.lower()}.xml"
