@@ -29,7 +29,7 @@ REGIONS = {
     "Channel_Islands": "64334", "Border": "64385"
 }
 
-# Freeview Play Content Classification Scheme (ContentSubjectCS:2014-07)
+# Freeview Play Content Classification Scheme
 FREEVIEW_GENRES = {
     "0": ["Shopping"],
     "1": ["Movie", "Film"],
@@ -68,7 +68,6 @@ def load_cache():
 def get_freeview_category(genre_urn):
     if not genre_urn: return []
     try:
-        # Extracts the main category number (e.g. from "3.1" it extracts "3")
         val = str(genre_urn).split(':')[-1]
         main_cat = val.split('.')[0]
         return FREEVIEW_GENRES.get(main_cat, [])
@@ -239,6 +238,13 @@ def run(target_region=None):
                     if blocked_count >= 5:
                         executor.shutdown(wait=False, cancel_futures=True)
                         break
+            
+            # --- THE FIX: CACHE PRUNING ---
+            # Keeps the cache size small so it never hits GitHub's 100MB limit
+            MAX_CACHE = 15000
+            if len(meta_cache) > MAX_CACHE:
+                # Discard the oldest entries, keeping only the most recent MAX_CACHE items
+                meta_cache = dict(list(meta_cache.items())[-MAX_CACHE:])
 
             with open(CACHE_FILE, 'w', encoding='utf-8') as f: json.dump(meta_cache, f)
         
@@ -265,7 +271,6 @@ def run(target_region=None):
                 if m.get('ad'): desc = f"[AD] {desc}" if desc else "[AD]"
                 if desc: f.write(f'    <desc>{html.escape(desc)}</desc>\n')
                 
-                # Accurately maps Freeview Play Genres
                 cats = get_freeview_category(p.get('genre') or m.get('genre'))
                 if cats:
                     for cat in cats:
